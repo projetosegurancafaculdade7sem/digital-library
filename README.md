@@ -95,8 +95,9 @@ A pasta `docs/` contém os documentos de requisitos, escopo e arquitetura do pro
 
 **Em desenvolvimento — MVP 1**
 
-## Autor
+## Autores
 
 **Davi Eliote de Carvalho**
+**Luiz Nabarretti**
 
 Projeto acadêmico — Engenharia de Software.
