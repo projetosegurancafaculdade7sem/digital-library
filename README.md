@@ -7,7 +7,7 @@ O projeto pensado é uma plataforma de estudos e organização digital, onde os 
 * **Linguagem:** Python
 * **Framework:** Django, bootstrap
 * **API:** Django REST Framework
-* **Banco de dados:** PostgreSQL
+* **Banco de dados:** supasabe ( cloud )
 * **Versionamento:** Git e GitHub
 
 ## Arquitetura
