@@ -4,15 +4,15 @@ O projeto pensado é uma plataforma de estudos e organização digital, onde os 
 
 ## Stack
 
-* **Linguagem:** Python
-* **Framework:** Django, bootstrap
-* **API:** Django REST Framework
+* **Linguagem:** Java
+* **Framework:** Spring Boot
+* **API:** Spring Boot Framework
 * **Banco de dados:** supasabe ( cloud )
 * **Versionamento:** Git e GitHub
 
 ## Arquitetura
 
-O projeto utilizará uma **Arquitetura em Camadas**, buscando separar as responsabilidades do sistema e facilitar sua manutenção e evolução.
+O projeto utilizará uma **Arquitetura em MVC**, buscando dividir o sistema em partes menores, onde cada uma tem uma única responsabilidade, facilitando a manutenção e os testes.
 
 A estrutura será organizada principalmente em:
 
