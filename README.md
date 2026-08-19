@@ -52,12 +52,11 @@ Essa estrutura permite que diversas fontes de livros sejam utilizadas sem que as
 
 A primeira versão terá como foco:
 
-* Cadastro e login de usuários (envolvendo os principais requisitos de autenticação e autorização;
+* Cadastro e login de usuários (envolvendo os principais requisitos de autenticação e autorização)
 * Busca de livros e materiais;
-* Filtros por assunto e categoria;
 * Visualização das informações dos materiais;
 * Acesso à fonte oficial do conteúdo;
-* Favoritos;
+
 
 Estrutura do projeto
 
