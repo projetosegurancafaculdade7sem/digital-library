@@ -23,9 +23,11 @@ Controllers
     ↓
 Services
     ↓
+   DTO
+    ↓
 Repositories / Integrações
     ↓
-PostgreSQL / APIs externas
+Supabase / APIs externas
 ```
 
 ### Controllers
@@ -69,24 +71,24 @@ src/
 │   └── reviews/
 │
 ├── services/
-│   ├── book_service.py
-│   ├── favorite_service.py
-│   └── review_service.py
+│   ├── book_service.java
+│   ├── favorite_service.java
+│   └── review_service.java
 │
 ├── repositories/
-│   ├── book_repository.py
-│   └── favorite_repository.py
+│   ├── book_repository.java
+│   └── favorite_repository.java
 │
 ├── integrations/
 │   ├── google_books/
-│   │   └── client.py
+│   │   └── client.java
 │   │
 │   └── open_library/
-│       └── client.py
+│       └── client.java
 │
 ├── config/
 │
-└── manage.py
+└── manage.java
 ```
 
 A pasta `docs/` contém os documentos de requisitos, escopo e arquitetura do projeto.
@@ -99,5 +101,6 @@ A pasta `docs/` contém os documentos de requisitos, escopo e arquitetura do pro
 
 **Davi Eliote de Carvalho**
 **Luiz Nabarretti**
+**Igor Hajime**
 
 Projeto acadêmico — Engenharia de Software.
