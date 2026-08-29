@@ -9,7 +9,7 @@ import java.time.Instant;
 import java.util.UUID;
 
 @Entity
-@Table(name = "tb_users")
+@Table(name ="tb_users")
 @Data
 public class User {
 
@@ -66,7 +66,7 @@ public class User {
     }
 
 
-    @PrePersist
+    @PreUpdate
     protected void onUpdate(){
         this.updatedAt = Instant.now();
     }

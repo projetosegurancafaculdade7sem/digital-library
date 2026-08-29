@@ -5,13 +5,11 @@ import com.example.demo.model.User;
 import com.example.demo.repository.UserRepository;
 import com.example.demo.security.TotpManager;
 import jakarta.transaction.Transactional;
-import lombok.NoArgsConstructor;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
-import java.time.chrono.ChronoPeriod;
 import java.time.temporal.ChronoUnit;
 
 @Service
@@ -22,9 +20,35 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final TotpManager totpManager;
     private final AuditService auditService;
+    private final TwoFactorService twoFactorService;
 
 
     private static final int MAX_FAILED_ATTEMPTS = 5;
+
+
+
+
+    @Transactional
+    public User authenticatePrimary(String email, String rawPassword){
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new IllegalArgumentException("Invalid credentials"));
+
+        if(!user.isAccountNonLocked()){
+            throw new IllegalStateException("Account temporaly locked, try again later ;/ ");
+        }
+        if (!passwordEncoder.matches(rawPassword, user.getPasswordHash())){
+            throw new IllegalStateException( "Invalid credentials");
+        }
+        return user;
+    }
+
+
+
+    public boolean verify2FACode(User user, String totpCode){
+        return twoFactorService.verifyCode(user.getTotpSecret(), totpCode);
+    }
+
+
 
     @Transactional
     public User authenticate(String email, String rawPassword, String totpcode, String ipAddress, String userAgent) {
@@ -56,7 +80,7 @@ public class AuthService {
         if (Boolean.TRUE.equals(user.is_2fa_enabled())) {
             if (!totpManager.verifyCode(user.getTotpSecret(), totpcode)) {
                 handleFailedLogin(user, ipAddress, userAgent);
-                throw new IllegalArgumentException("2FA code invalid or expired!")
+                throw new IllegalArgumentException("2FA code invalid or expired!");
             }
         }
 
@@ -65,17 +89,18 @@ public class AuthService {
         user.setUpdatedAt(Instant.now());
         userRepository.save(user);
 
-        auditService.logEvent(user.getId, "LOGIN_SUCCESS", ipAddress, userAgent);
+        auditService.logEvent(user.getId(), "LOGIN_SUCCESS", ipAddress, userAgent);
         return user;
 
 
     }
+
     private void handleFailedLogin(User user, String ipAddress, String userAgent){
-        int attemps = user.getFailedLoginAttempts() + 1;
-        user.setFailedLoginAttempts(attemps);
+        int attempts = user.getFailedLoginAttempts() + 1;
+        user.setFailedLoginAttempts(attempts);
         user.setUpdatedAt(Instant.now());
 
-        if(attemps >= MAX_FAILED_ATTEMPTS){
+        if(attempts >= MAX_FAILED_ATTEMPTS){
             user.setAccountNonLocked(false);
             //block account for 15 minutes
             user.setLockedUntil(Instant.now().plus(15, ChronoUnit.MINUTES));
