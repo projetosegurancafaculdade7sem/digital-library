@@ -1,252 +1,187 @@
 package com.example.demo.controller;
 
-
 import com.example.demo.dto.request.LoginForm;
-import com.example.demo.dto.request.RegisterRequest;
-import com.example.demo.dto.request.ResetPasswordForm;
 import com.example.demo.model.User;
-import com.example.demo.service.AuthService;
-import com.example.demo.service.PasswordResetService;
-import com.example.demo.service.TwoFactorService;
-import com.example.demo.service.UserService;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpSession;
-import jakarta.validation.Valid;
-import lombok.RequiredArgsConstructor;
-import org.apache.coyote.Response;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
+import com.example.demo.repository.UserRepository;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Controller;
-import org.springframework.validation.BindingResult;
-import org.springframework.web.bind.annotation.*;
 import org.springframework.ui.Model;
-import org.springframework.web.servlet.mvc.support.RedirectAttributes;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 
+import java.time.Instant;
+import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Controller
-@RequiredArgsConstructor
 public class AuthController {
 
-    private final AuthService authService;
-    private final PasswordResetService passwordResetService;
-    private final UserService userService;
-    private final TwoFactorService twoFactorService;
+    private final UserRepository userRepository;
+    private final PasswordEncoder passwordEncoder;
 
-    // route to register
-    @GetMapping("/register")
-    public String registerPage(Model model) {
-        if (!model.containsAttribute("registerForm")) {
-            model.addAttribute("registerForm", new RegisterRequest());
-        }
-        return "register";
+    // Armazena temporariamente os tokens de recuperação: Map<Token, Email>
+    private static final Map<String, String> resetTokenStore = new ConcurrentHashMap<>();
+
+    public AuthController(UserRepository userRepository, PasswordEncoder passwordEncoder) {
+        this.userRepository = userRepository;
+        this.passwordEncoder = passwordEncoder;
     }
 
-    // Processes the registration form
-    @PostMapping("/register")
-    public String handleRegister(@Valid @ModelAttribute("registerForm") RegisterRequest form,
-                                 BindingResult bindingResult,
-                                 RedirectAttributes redirectAttributes) {
-
-        if (bindingResult.hasErrors()) {
-            redirectAttributes.addFlashAttribute("org.springframework.validation.BindingResult.registerForm", bindingResult);
-            redirectAttributes.addFlashAttribute("registerForm", form);
-            return "redirect:/register";
-        }
-
-        try {
-            userService.registerUser(form);
-            redirectAttributes.addFlashAttribute("successMessage", "Account created successfully! Please log in.");
-            return "redirect:/login";
-        } catch (IllegalArgumentException e) {
-            redirectAttributes.addFlashAttribute("errorMessage", e.getMessage());
-            redirectAttributes.addFlashAttribute("registerForm", form);
-            return "redirect:/register";
-        }
-    }
-
-    //loads login screen
+    // ==========================================
+    // TELA E PROCESSAMENTO DE LOGIN
+    // ==========================================
     @GetMapping("/login")
-    public String loginPage(Model model,
-                            @RequestParam(value = "error", required = false) String error,
-                            @RequestParam(value = "logout", required = false) String logout) {
+    public String showLoginPage(@RequestParam(value = "error", required = false) String error,
+                                @RequestParam(value = "logout", required = false) String logout,
+                                @RequestParam(value = "expired", required = false) String expired,
+                                @RequestParam(value = "registered", required = false) String registered,
+                                @RequestParam(value = "reset", required = false) String reset,
+                                Model model) {
+
         if (!model.containsAttribute("loginForm")) {
             model.addAttribute("loginForm", new LoginForm());
         }
+
         if (error != null) {
-            model.addAttribute("successMessage", "You've ended your session safely");
+            model.addAttribute("errorMessage", "Credenciais inválidas ou conta bloqueada temporariamente.");
         }
-        return "login";
+        if (logout != null) {
+            model.addAttribute("logoutMessage", "Sessão encerrada com sucesso.");
+        }
+        if (expired != null) {
+            model.addAttribute("expiredMessage", "Sua sessão expirou por inatividade.");
+        }
+        if (registered != null) {
+            model.addAttribute("registeredMessage", "Cadastro realizado com sucesso! Faça seu login.");
+        }
+        if (reset != null) {
+            model.addAttribute("successMessage", "Senha alterada com sucesso! Faça login com a nova senha.");
+        }
+
+        return "auth/login";
     }
 
-    // POST /login-custom (Ajustado para o fluxo em duas etapas)
-    @PostMapping("/login-custom")
-    public String handleLogin(@ModelAttribute("loginForm") LoginForm form,
-                              HttpServletRequest request,
-                              HttpSession session,
-                              RedirectAttributes redirectAttributes) {
+    // ==========================================
+    // TELA E PROCESSAMENTO DE CADASTRO
+    // ==========================================
+    @GetMapping("/register")
+    public String showRegisterPage() {
+        return "auth/register";
+    }
+
+    @PostMapping("/register")
+    public String handleRegister(@RequestParam("name") String name,
+                                 @RequestParam("email") String email,
+                                 @RequestParam("password") String password,
+                                 Model model) {
         try {
-            // Passo 1: Autenticação primária (Email + Senha)
-            User user = authService.authenticatePrimary(form.getEmail(), form.getPassword());
-
-            // Se 2FA estiver ativado, valida o token digitado ou redireciona para a tela de 2FA
-            if (user.is_2fa_enabled()) {
-                if (form.getTotpcode() == null || form.getTotpcode().isBlank()) {
-                    session.setAttribute("PRE_AUTH_USER_ID", user.getId());
-                    return "redirect:/login-2fa";
-                }
-
-                boolean is2faValid = authService.verify2FACode(user, form.getTotpcode());
-                if (!is2faValid) {
-                    redirectAttributes.addFlashAttribute("errorMessage", "Código 2FA inválido ou expirado.");
-                    return "redirect:/login";
-                }
+            if (userRepository.findByEmail(email).isPresent()) {
+                model.addAttribute("errorMessage", "Já existe um usuário cadastrado com este e-mail.");
+                return "auth/register";
             }
 
-            // Sessão autorizada
-            session.setAttribute("LOGGED_USER_ID", user.getId());
-            return "redirect:/dashboard";
+            User newUser = new User();
+            newUser.setName(name);
+            newUser.setEmail(email);
+            newUser.setPasswordHash(passwordEncoder.encode(password));
+            newUser.setRole("ROLE_USER");
+            newUser.setTwoFactorEnabled(false);
+            newUser.setAccountNonLocked(true);
+            newUser.setFailedLoginAttempts(0);
+            newUser.setCreatedAt(Instant.now());
 
-        } catch (IllegalArgumentException | IllegalStateException e) {
-            redirectAttributes.addFlashAttribute("errorMessage", e.getMessage());
-            return "redirect:/login";
+            userRepository.save(newUser);
+            System.out.println(">>> USUÁRIO REGISTRADO COM SUCESSO: " + email);
+
+            return "redirect:/login?registered=true";
+        } catch (Exception e) {
+            e.printStackTrace();
+            model.addAttribute("errorMessage", "Erro ao salvar no banco: " + e.getMessage());
+            return "auth/register";
         }
     }
 
-    // GET /setup-2fa: Renderiza a tela de ativação do 2FA exibindo o QR Code
-    @GetMapping("/setup-2fa")
-    public String setup2FAPage(HttpSession session, Model model) {
-        UUID userId = (UUID) session.getAttribute("LOGGED_USER_ID");
-        if (userId == null) {
-            return "redirect:/login";
-        }
-
-        User user = userService.findById(userId);
-        String secret = userService.setup2FA(userId);
-        String qrCodeDataUrl = twoFactorService.generateQrCodeDataUrl(secret, user.getEmail());
-
-        model.addAttribute("qrCodeUrl", qrCodeDataUrl);
-        model.addAttribute("secret", secret);
-        return "setup-2fa";
-    }
-
-    // POST /enable-2fa: Confirma o primeiro código e ativa o 2FA definitivamente
-    @PostMapping("/enable-2fa")
-    public String enable2FA(@RequestParam("code") String code,
-                            HttpSession session,
-                            RedirectAttributes redirectAttributes) {
-        UUID userId = (UUID) session.getAttribute("LOGGED_USER_ID");
-        try {
-            userService.enable2FA(userId, code);
-            redirectAttributes.addFlashAttribute("successMessage", "2FA ativado com sucesso!");
-            return "redirect:/dashboard";
-        } catch (IllegalArgumentException e) {
-            redirectAttributes.addFlashAttribute("errorMessage", e.getMessage());
-            return "redirect:/setup-2fa";
-        }
-    }
-
-    //Renders the password recovery page.
+    // ==========================================
+    // RECUPERAÇÃO DE SENHA (FORGOT PASSWORD)
+    // ==========================================
     @GetMapping("/forgot-password")
-    public String forgotPasswordPage(){
-        return "forgot-password";
+    public String showForgotPasswordPage() {
+        return "auth/forgot-password";
     }
 
-    //process to recover email
     @PostMapping("/forgot-password")
-    public String handleForgotPassword(@RequestParam("email") String email,
-                                     HttpServletRequest request,
-                                     RedirectAttributes redirectAttributes){
+    public String handleForgotPassword(@RequestParam("email") String email, Model model) {
+        try {
+            Optional<User> userOptional = userRepository.findByEmail(email);
 
-        String clientIp = getClientIP(request);
-        String userAgent = request.getHeader("User-Agent");
+            if (userOptional.isPresent()) {
+                String resetToken = UUID.randomUUID().toString();
+                resetTokenStore.put(resetToken, email);
 
-        //creates a resetToken that allows the user to reset it.
-        passwordResetService.createResetToken(email, clientIp, userAgent);
+                System.out.println("==================================================");
+                System.out.println(">>> TOKEN DE REDEFINIÇÃO GERADO PARA: " + email);
+                System.out.println(">>> LINK: http://localhost:8080/reset-password?token=" + resetToken);
+                System.out.println("==================================================");
+            }
 
-        redirectAttributes.addFlashAttribute("successMessage",
-                "If is your e-mail registered, you'll receive the instructions to recover your password :-)");
-
-
-        return "redirect:/forgot-password";
+            model.addAttribute("successMessage", "Se o e-mail estiver cadastrado, o link de recuperação foi enviado.");
+            return "auth/forgot-password";
+        } catch (Exception e) {
+            model.addAttribute("errorMessage", "Erro ao processar solicitação: " + e.getMessage());
+            return "auth/forgot-password";
+        }
     }
 
+    // ==========================================
+    // REDEFINIÇÃO DE SENHA (RESET PASSWORD)
+    // ==========================================
     @GetMapping("/reset-password")
-    public String resetPasswordPage(@RequestParam("token") String token, Model model){
-        ResetPasswordForm form = new ResetPasswordForm();
-        form.setToken(token);
-        model.addAttribute("resetPasswordForm", form);
-        return "reset-password";
+    public String showResetPasswordPage(@RequestParam(value = "token", required = false) String token, Model model) {
+        if (token == null || !resetTokenStore.containsKey(token)) {
+            model.addAttribute("errorMessage", "Token inválido ou expirado.");
+        }
+        model.addAttribute("token", token);
+        return "auth/reset-password";
     }
 
     @PostMapping("/reset-password")
-    public String handleResetPassword(@ModelAttribute("resetPasswordForm") ResetPasswordForm form, HttpServletRequest request, RedirectAttributes redirectAttributes){
-
-        if(!form.getNewPassword().equals(form.getConfirmPassword())){
-            redirectAttributes.addFlashAttribute("errorMessage", "Both password do not match");
-            return "redirect:/reset-password?token=" + form.getToken();
-        }
-        try{
-            String clientIp = getClientIP(request);
-            String userAgent = request.getHeader("User-Agent");
-
-            passwordResetService.resetPassword(form.getToken(), form.getNewPassword(), clientIp, userAgent);
-            redirectAttributes.addFlashAttribute("successMessage", "Password successfully changed");
-            return "redirect:/login";
-        } catch(IllegalArgumentException | IllegalStateException error){
-            redirectAttributes.addFlashAttribute("errorMessage", error.getMessage());
-            return "redirect:/login";
-        }
-    }
-
-
-
-    private String getClientIP(HttpServletRequest request) {
-        String xfHeader = request.getHeader("X-Forwarded-For");
-        if (xfHeader == null || xfHeader.isEmpty()) {
-            return request.getRemoteAddr();
-        }
-        return xfHeader.split(",")[0];
-    }
-
-    // Renders the Step 2 screen (for entering the 2FA code only)
-    @GetMapping("/login-2fa")
-    public String login2faPage(HttpSession session, Model model) {
-        UUID preAuthUserId = (UUID) session.getAttribute("PRE_AUTH_USER_ID");
-        if (preAuthUserId == null) {
-            return "redirect:/login";
-        }
-        return "login-2fa"; // Thymeleaf template name (login-2fa.html)
-    }
-
-    //Processes the exclusive validation for Login Step 2.
-    @PostMapping("/login-2fa")
-    public String handleLogin2fa(@RequestParam("totpcode") String totpcode,
-                                 HttpSession session,
-                                 RedirectAttributes redirectAttributes) {
-        UUID preAuthUserId = (UUID) session.getAttribute("PRE_AUTH_USER_ID");
-        if (preAuthUserId == null) {
-            return "redirect:/login";
-        }
-
+    public String handleResetPassword(@RequestParam(value = "token", required = false) String token,
+                                      @RequestParam("newPassword") String newPassword,
+                                      Model model) {
         try {
-            User user = userService.findById(preAuthUserId);
-            boolean is2faValid = authService.verify2FACode(user, totpcode);
-
-            if (!is2faValid) {
-                redirectAttributes.addFlashAttribute("errorMessage", "Código 2FA inválido ou expirado.");
-                return "redirect:/login-2fa";
+            if (token == null || !resetTokenStore.containsKey(token)) {
+                model.addAttribute("errorMessage", "Token de redefinição inválido ou expirado.");
+                return "auth/reset-password";
             }
 
-            // Success! Promotes the session for a fully authenticated user.
-            session.removeAttribute("PRE_AUTH_USER_ID");
-            session.setAttribute("LOGGED_USER_ID", user.getId());
-            return "redirect:/dashboard";
+            String email = resetTokenStore.get(token);
+            Optional<User> userOptional = userRepository.findByEmail(email);
 
+            if (userOptional.isPresent()) {
+                User user = userOptional.get();
+                user.setPasswordHash(passwordEncoder.encode(newPassword));
+                user.setUpdatedAt(Instant.now());
+                userRepository.save(user);
+
+                resetTokenStore.remove(token);
+                System.out.println(">>> SENHA ATUALIZADA COM SUCESSO PARA: " + email);
+            }
+
+            return "redirect:/login?reset=true";
         } catch (Exception e) {
-            redirectAttributes.addFlashAttribute("errorMessage", "Erro na validação do 2FA.");
-            return "redirect:/login";
+            model.addAttribute("errorMessage", "Erro ao redefinir senha: " + e.getMessage());
+            return "auth/reset-password";
         }
     }
 
+    // ==========================================
+    // AUTENTICAÇÃO DE DOIS FATORES (2FA)
+    // ==========================================
+    @GetMapping("/login-2fa")
+    public String show2faPage() {
+        return "auth/two-factor";
+    }
 }
