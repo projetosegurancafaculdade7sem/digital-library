@@ -1,103 +1,72 @@
 package com.example.demo.service;
 
-
 import com.example.demo.model.PasswordResetToken;
 import com.example.demo.model.User;
 import com.example.demo.repository.PasswordResetTokenRepository;
 import com.example.demo.repository.UserRepository;
-import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.Base64;
-import java.util.HexFormat;
+import java.util.Optional;
+import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
 public class PasswordResetService {
 
+    private final PasswordResetTokenRepository passwordResetTokenRepository;
     private final UserRepository userRepository;
-    private final PasswordResetTokenRepository tokenRepository;
     private final PasswordEncoder passwordEncoder;
-    private final AuditService auditService;
 
     @Transactional
-    public String createResetToken(String email, String ipAddress, String userAgent){
-        User user = userRepository.findByEmail(email).orElse(null);
-        if(user == null) return null;
+    public void createResetToken(String email, String clientIp, String userAgent) {
+        Optional<User> userOptional = userRepository.findByEmail(email);
+        if (userOptional.isEmpty()) {
+            // Mitigação de User Enumeration (Requisito 1.8)
+            return;
+        }
 
-        tokenRepository.findByUserIdAndUsedFalse(user.getId()).forEach(token -> {
-            token.setUsed(true);
-            tokenRepository.save(token);
-        });
+        User user = userOptional.get();
+        String token = UUID.randomUUID().toString();
 
-        //generate random token (sent to email)
-        byte[] randomBytes = new byte[32];
-        new SecureRandom().nextBytes(randomBytes);
-        String rawToken = Base64.getUrlEncoder().withoutPadding().encodeToString(randomBytes);
-
-        //genarate hash of the token to save in db
-        String tokenHash = hashToken(rawToken);
-
-        PasswordResetToken token = PasswordResetToken.builder()
-                .userID(user.getId())
-                .tokenHash(tokenHash)
+        PasswordResetToken resetToken = PasswordResetToken.builder()
+                .token(token)
+                .userId(user.getId())
                 .expiresAt(Instant.now().plus(15, ChronoUnit.MINUTES))
                 .used(false)
+                .clientIp(clientIp)
+                .userAgent(userAgent)
+                .createdAt(Instant.now())
                 .build();
 
-        tokenRepository.save(token);
-        auditService.logEvent(user.getId(), "PASSWORD_RESET_REQUIRED", ipAddress, userAgent);
-
-        return rawToken;
-
+        passwordResetTokenRepository.save(resetToken);
+        System.out.println(">>> LINK DE RECUPERAÇÃO: http://localhost:8080/reset-password?token=" + token);
     }
 
-    //method to decode token and reset password
     @Transactional
-    public void resetPassword(String rawToken, String newPassword, String ipAddress, String userAgent){
-        String tokenHash = hashToken(rawToken);
+    public void resetPassword(String token, String newPassword, String clientIp, String userAgent) {
+        PasswordResetToken resetToken = passwordResetTokenRepository.findByToken(token)
+                .orElseThrow(() -> new IllegalArgumentException("Token inválido ou não encontrado."));
 
-        PasswordResetToken resetToken = tokenRepository.findByTokenHashAndUsedFalse(tokenHash)
-                .orElseThrow(() -> new IllegalArgumentException("INVALID OR EXPIRED TOKEN"));
+        if (resetToken.isUsed()) {
+            throw new IllegalStateException("Este token já foi utilizado.");
+        }
 
-        if(Instant.now().isAfter(resetToken.getExpiresAt())){
-            throw new IllegalArgumentException("EXPIRED TOKEN");
+        if (resetToken.getExpiresAt().isBefore(Instant.now())) {
+            throw new IllegalStateException("O token expirou. Solicite uma nova recuperação.");
         }
 
         User user = userRepository.findById(resetToken.getUserID())
-                .orElseThrow(() -> new IllegalArgumentException("USER NOT FOUND"));
+                .orElseThrow(() -> new IllegalArgumentException("Usuário associado não encontrado."));
 
-        //update user password
         user.setPasswordHash(passwordEncoder.encode(newPassword));
-        user.setUpdatedAt(Instant.now());
         userRepository.save(user);
 
-        //set the token as used
         resetToken.setUsed(true);
-        tokenRepository.save(resetToken);
-
-        auditService.logEvent(user.getId(), "PASSWORD_RESET_SUCCESS", ipAddress, userAgent);
-
+        passwordResetTokenRepository.save(resetToken);
     }
-
-    private String hashToken(String rawToken){
-        try{
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(rawToken.getBytes(StandardCharsets.UTF_8));
-            return HexFormat.of().formatHex(hash);
-        } catch (NoSuchAlgorithmException error){
-            throw new RuntimeException("ERROR WHILE GENARATING TOKEN HASH",error);
-        }
-    }
-
-
 }
-
