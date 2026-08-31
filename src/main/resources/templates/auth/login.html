@@ -28,40 +28,45 @@
                 </div>
 
                 <!-- ========================================================================= -->
-                <!-- BLOCO DE ALERTAS E FEEDBACK DE SEGURANÇA (Atende aos Requisitos 1.8 e 1.11) -->
+                <!-- BLOCO DE ALERTAS E FEEDBACK DE SEGURANÇA -->
                 <!-- ========================================================================= -->
 
-                <!-- Alerta 1: Credenciais Inválidas -->
+                <!-- Alerta: Cadastro realizado com sucesso -->
+                <div th:if="${param.registered}" class="alert alert-success d-flex align-items-center small py-2" role="alert">
+                    <i class="bi bi-check-circle-fill me-2"></i>
+                    <div>Conta criada com sucesso! Faça login para continuar.</div>
+                </div>
+
+                <!-- Alerta: Credenciais Inválidas -->
                 <div th:if="${param.error}" class="alert alert-danger d-flex align-items-center small py-2" role="alert">
                     <i class="bi bi-exclamation-triangle-fill me-2"></i>
                     <div>E-mail ou senha incorretos.</div>
                 </div>
 
-                <!-- Alerta 2: Sessão Encerrada / Logout (Requisito 1.10) -->
+                <!-- Alerta: Sessão Encerrada / Logout -->
                 <div th:if="${param.logout}" class="alert alert-info d-flex align-items-center small py-2" role="alert">
                     <i class="bi bi-info-circle-fill me-2"></i>
                     <div>Sessão invalidada com sucesso.</div>
                 </div>
 
-                <!-- Alerta 3: Sessão Expirada por Inatividade (Requisito 1.9) -->
+                <!-- Alerta: Sessão Expirada por Inatividade -->
                 <div th:if="${param.expired}" class="alert alert-warning d-flex align-items-center small py-2" role="alert">
                     <i class="bi bi-clock-history me-2"></i>
                     <div>Sua sessão expirou por inatividade. Faça login novamente.</div>
                 </div>
 
-                <!-- Alerta 4: Bloqueio por Força Bruta / Rate Limiting (Requisito 1.11) -->
+                <!-- Alerta: Bloqueio por Força Bruta / Rate Limiting -->
                 <div th:if="${param.locked}" class="alert alert-danger d-flex align-items-center small py-2" role="alert">
                     <i class="bi bi-shield-x me-2"></i>
                     <div>Múltiplas tentativas incorretas. Conta bloqueada temporariamente.</div>
                 </div>
 
                 <!-- ========================================================================= -->
-                <!-- FORMULÁRIO DE AUTENTICAÇÃO PRIMÁRIA (Etapa 1 do fluxo 2FA - Requisito 1.6) -->
+                <!-- FORMULÁRIO DE AUTENTICAÇÃO PRIMÁRIA -->
                 <!-- ========================================================================= -->
-                <form method="POST" th:action="@{/auth/login}">
+                <form method="POST" th:action="@{/perform_login}">
 
-                    <!-- Proteção contra Cross-Site Request Forgery (CSRF) via Spring Security -->
-                    <!-- O token CSRF garante que a requisição partiu legitimamente desta página -->
+                    <!-- Proteção CSRF -->
                     <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}" />
 
                     <!-- Campo de Usuário / E-mail -->
@@ -83,7 +88,7 @@
                     <div class="mb-3">
                         <div class="d-flex justify-content-between align-items-center">
                             <label for="password" class="form-label small fw-semibold text-secondary">Senha</label>
-                            <a href="/auth/forgot-password" class="text-decoration-none small text-muted" style="font-size: 0.8rem;">Esqueceu a senha?</a>
+                            <a th:href="@{/forgot-password}" class="text-decoration-none small text-muted" style="font-size: 0.8rem;">Esqueceu a senha?</a>
                         </div>
                         <div class="input-group">
                             <span class="input-group-text bg-white text-muted"><i class="bi bi-key"></i></span>
@@ -107,7 +112,7 @@
 
                 <!-- Redirecionamento para Cadastro -->
                 <div class="text-center mt-4 border-top pt-3">
-                    <small class="text-muted">Não possui cadastro? <a href="/auth/register" class="text-primary text-decoration-none fw-semibold">Cadastre-se</a></small>
+                    <small class="text-muted">Não possui cadastro? <a th:href="@{/register}" class="text-primary text-decoration-none fw-semibold">Cadastre-se</a></small>
                 </div>
 
             </div>

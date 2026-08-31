@@ -24,7 +24,6 @@ public class SecurityConfig {
         this.userRepository = userRepository;
     }
 
-    // Serviço que consulta o banco de dados na autenticação
     @Bean
     public UserDetailsService userDetailsService() {
         return username -> {
@@ -51,8 +50,19 @@ public class SecurityConfig {
         http
                 .addFilterBefore(rateLimitingFilter, UsernamePasswordAuthenticationFilter.class)
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/css/**", "/js/**", "/images/**", "/webjars/**", "/favicon.ico").permitAll()
-                        .requestMatchers("/login", "/register", "/forgot-password", "/reset-password", "/login-custom", "/login-2fa", "/error").permitAll()
+                        .requestMatchers(
+                                "/css/**",
+                                "/js/**",
+                                "/images/**",
+                                "/webjars/**",
+                                "/favicon.ico",
+                                "/login",
+                                "/register",
+                                "/forgot-password",
+                                "/reset-password",
+                                "/login-2fa",
+                                "/error"
+                        ).permitAll()
                         .anyRequest().authenticated()
                 )
                 .formLogin(form -> form
