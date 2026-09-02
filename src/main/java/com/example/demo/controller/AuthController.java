@@ -9,6 +9,8 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 
+import java.util.Optional;
+
 @Controller
 public class AuthController {
 
@@ -36,38 +38,73 @@ public class AuthController {
                                @RequestParam("password") String password,
                                Model model) {
 
-        // 1. Verifica se o e-mail já existe
         if (userRepository.findByEmail(email).isPresent()) {
             model.addAttribute("error", "Este e-mail já está cadastrado no sistema.");
             return "auth/register";
         }
 
-        // 2. Validação básica de senha
         if (password == null || password.length() < 8) {
             model.addAttribute("error", "A senha deve conter no mínimo 8 caracteres.");
             return "auth/register";
         }
 
-        // 3. Criptografa a senha com Argon2id
         String hashedPassword = passwordEncoder.encode(password);
 
-        // 4. Cria e popula o seu objeto User existente
         User user = new User();
         user.setName(name);
         user.setEmail(email);
-        user.setPasswordHash(hashedPassword); // se o seu campo se chamar setPassword(), altere aqui
+        user.setPasswordHash(hashedPassword);
 
         userRepository.save(user);
 
-        System.out.println(">>> [NOVO CADASTRO] Usuário cadastrado: " + email);
-
-        // 5. Redireciona para o login com mensagem de sucesso
         return "redirect:/login?registered=true";
     }
 
     @GetMapping("/forgot-password")
     public String forgotPasswordPage() {
         return "auth/forgot-password";
+    }
+
+    @PostMapping("/forgot-password")
+    public String processForgotPassword(@RequestParam("email") String email) {
+        // Simulação do envio: gera o link clicável direto no console do IntelliJ
+        String resetLink = "http://localhost:8080/reset-password?email=" + email;
+
+        System.out.println("=================================================");
+        System.out.println(">>> [SIMULAÇÃO DE E-MAIL DE RECUPERAÇÃO]");
+        System.out.println(">>> Destinatário: " + email);
+        System.out.println(">>> Clique no link para redefinir: " + resetLink);
+        System.out.println("=================================================");
+
+        return "redirect:/forgot-password?sent=true";
+    }
+
+    @GetMapping("/reset-password")
+    public String resetPasswordPage(@RequestParam("email") String email, Model model) {
+        model.addAttribute("email", email);
+        return "auth/reset-password";
+    }
+
+    @PostMapping("/reset-password")
+    public String processResetPassword(@RequestParam("email") String email,
+                                       @RequestParam("password") String newPassword,
+                                       Model model) {
+
+        if (newPassword == null || newPassword.length() < 8) {
+            model.addAttribute("email", email);
+            model.addAttribute("error", "A senha deve conter no mínimo 8 caracteres.");
+            return "auth/reset-password";
+        }
+
+        Optional<User> userOpt = userRepository.findByEmail(email);
+        if (userOpt.isPresent()) {
+            User user = userOpt.get();
+            user.setPasswordHash(passwordEncoder.encode(newPassword));
+            userRepository.save(user);
+            System.out.println(">>> [SENHA ATUALIZADA] Sucesso para: " + email);
+        }
+
+        return "redirect:/login?resetSuccess=true";
     }
 
     @GetMapping("/login-2fa")
