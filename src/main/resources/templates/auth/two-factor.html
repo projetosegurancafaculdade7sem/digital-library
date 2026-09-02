@@ -3,18 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Digital Library - Verificação em Duas Etapas (2FA)</title>
-
-    <!-- Bootstrap 5 CSS -->
+    <title>Digital Library - Verificação em Duas Etapas</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
     <style>
-        /* Estilo para destacar os dígitos do código TOTP */
-        .totp-input {
-          font-size: 1.8rem;
-          letter-spacing: 0.5rem;
-          text-align: center;
-          font-weight: 700;
+        .otp-input {
+            letter-spacing: 8px;
+            font-size: 1.5rem;
+            text-align: center;
+            font-weight: bold;
         }
     </style>
 </head>
@@ -23,80 +20,48 @@
 <div class="container">
     <div class="row justify-content-center">
         <div class="col-12 col-md-8 col-lg-4">
-
-            <!-- Card Central de Verificação 2FA -->
             <div class="card shadow-sm border-0 rounded-3 p-4">
 
-                <!-- Ícone e Cabeçalho Informativo -->
                 <div class="text-center mb-4">
-                    <div class="badge bg-success-subtle text-success p-3 rounded-circle mb-2">
+                    <div class="badge bg-primary-subtle text-primary p-3 rounded-circle mb-2">
                         <i class="bi bi-shield-check fs-3"></i>
                     </div>
                     <h4 class="fw-bold text-dark">Autenticação 2FA</h4>
-                    <p class="text-muted small">
-                        <!-- Requisito 1.6: Validação do 2FA após autenticação primária -->
-                        Etapa 2/2: Digite o código temporário gerado no seu aplicativo autenticador (Google Authenticator ou similar).
-                    </p>
+                    <p class="text-muted small">Digite o código de verificação de 6 dígitos gerado para a sua sessão</p>
                 </div>
 
-                <!-- ========================================================================= -->
-                <!-- FEEDBACK DE ERROS DE 2FA (Requisito 1.8 e 1.11) -->
-                <!-- ========================================================================= -->
-
-                <!-- Erro de Código Inválido ou Expirado -->
-                <div th:if="${param.error}" class="alert alert-danger d-flex align-items-center small py-2" role="alert">
+                <!-- Mensagem de erro -->
+                <div th:if="${error}" class="alert alert-danger small py-2" role="alert">
                     <i class="bi bi-exclamation-triangle-fill me-2"></i>
-                    <div>Código 2FA incorreto ou expirado. Tente novamente.</div>
+                    <span th:text="${error}"></span>
                 </div>
 
-                <!-- Bloqueio por Tentativas Excessivas de 2FA (Requisito 1.11) -->
-                <div th:if="${param.locked}" class="alert alert-danger d-flex align-items-center small py-2" role="alert">
-                    <i class="bi bi-shield-x me-2"></i>
-                    <div>Múltiplas tentativas de 2FA inválidas. Acesso temporariamente suspenso.</div>
-                </div>
-
-                <!-- ========================================================================= -->
-                <!-- FORMULÁRIO DO SEGUNDO FATOR DE AUTENTICAÇÃO (Requisito 1.5) -->
-                <!-- ========================================================================= -->
-                <form method="POST" th:action="@{/auth/2fa/verify}">
-
-                    <!-- Proteção CSRF contra requisições forjadas -->
+                <!-- Formulário de validação do código -->
+                <form method="POST" th:action="@{/login-2fa}">
                     <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}" />
 
-                    <!-- Campo de Inserção do Token TOTP de 6 dígitos -->
                     <div class="mb-3">
-                        <label for="totpCode" class="form-label small fw-semibold text-secondary text-center d-block">
-                            Código de Verificação (6 Dígitos)
-                        </label>
+                        <label for="code" class="form-label small fw-semibold text-secondary">Código de 6 dígitos</label>
                         <input type="text"
-                               class="form-control totp-input"
-                               id="totpCode"
+                               class="form-control otp-input"
+                               id="code"
                                name="code"
-                               placeholder="000000"
                                maxlength="6"
-                               pattern="[0-9]{6}"
-                               inputmode="numeric"
+                               placeholder="000000"
+                               autocomplete="one-time-code"
                                required
-                               autofocus
-                               autocomplete="one-time-code">
-                        <div class="form-text text-center small mt-2 text-muted">
-                            O código renova a cada 30 segundos.
-                        </div>
+                               autofocus>
                     </div>
 
-                    <!-- Botão de Confirmação -->
                     <div class="d-grid mt-4">
-                        <button type="submit" class="btn btn-success py-2 fw-semibold">
-                            <i class="bi bi-check-circle me-1"></i> Validar e Acessar
+                        <button type="submit" class="btn btn-primary py-2 fw-semibold">
+                            <i class="bi bi-unlock me-1"></i> Validar e Acessar
                         </button>
                     </div>
                 </form>
 
-                <!-- Opção de Cancelamento / Voltar ao Login Primário -->
                 <div class="text-center mt-4 border-top pt-3">
-                    <a href="/auth/login" class="text-muted text-decoration-none small">
-                        <i class="bi bi-arrow-left me-1"></i> Cancelar e voltar ao login
-                    </a>
+                    <small class="text-muted">Deseja cancelar? <a th:href="@{/logout}" class="text-danger text-decoration-none fw-semibold">Sair</a></small>
                 </div>
 
             </div>
