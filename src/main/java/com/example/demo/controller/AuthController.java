@@ -1,7 +1,12 @@
 package com.example.demo.controller;
 
+import com.example.demo.model.PasswordResetToken;
 import com.example.demo.model.User;
+import com.example.demo.repository.PasswordResetTokenRepository;
 import com.example.demo.repository.UserRepository;
+import com.example.demo.service.AuditService;
+import com.example.demo.service.MailService;
+import com.example.demo.service.PasswordResetService;
 import jakarta.servlet.http.HttpSession;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -12,6 +17,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 
 import java.security.SecureRandom;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.Optional;
 
@@ -21,16 +27,29 @@ public class AuthController {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final SecureRandom secureRandom = new SecureRandom();
+    private final PasswordResetService passwordResetService;
+    private final PasswordResetTokenRepository passwordResetTokenRepository;
+    private final MailService mailService;
+    private final AuditService auditService;
 
-    public AuthController(UserRepository userRepository, PasswordEncoder passwordEncoder) {
+    public AuthController(UserRepository userRepository, PasswordEncoder passwordEncoder, PasswordResetService passwordResetService, PasswordResetTokenRepository passwordResetTokenRepository, MailService mailService, AuditService auditService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
+        this.passwordResetService = passwordResetService;
+        this.passwordResetTokenRepository = passwordResetTokenRepository;
+        this.mailService = mailService;
+        this.auditService = auditService;
     }
 
     @GetMapping("/login")
     public String loginPage() {
         return "auth/login";
     }
+
+
+
+    // TELA E PROCESSAMENTO DE CADASTRO
+
 
     @GetMapping("/register")
     public String registerPage() {
@@ -43,8 +62,28 @@ public class AuthController {
                                @RequestParam("password") String password,
                                Model model) {
 
+        try{
         if (userRepository.findByEmail(email).isPresent()) {
             model.addAttribute("error", "Este e-mail já está cadastrado no sistema.");
+
+            User newUser = new User();
+            newUser.setName(name);
+            newUser.setEmail(email);
+            newUser.setPasswordHash(passwordEncoder.encode(password));
+            newUser.setRole("ROLE_USER");
+            newUser.setTwoFactorEnabled(false);
+            newUser.setAccountNonLocked(true);
+            newUser.setFailedLoginAttempts(0);
+            newUser.setCreatedAt(Instant.now());
+
+            userRepository.save(newUser);
+            System.out.println(" USUÁRIO REGISTRADO COM SUCESSO: " + email);
+
+            return "redirect:/login?registered=true";
+        } }catch (Exception e) {
+            e.printStackTrace();
+            model.addAttribute("errorMessage", "Erro ao salvar no banco: " + e.getMessage());
+
             return "auth/register";
         }
 
@@ -65,50 +104,74 @@ public class AuthController {
         return "redirect:/login?registered=true";
     }
 
+
     @GetMapping("/forgot-password")
     public String forgotPasswordPage() {
         return "auth/forgot-password";
     }
 
     @PostMapping("/forgot-password")
-    public String processForgotPassword(@RequestParam("email") String email) {
-        String resetLink = "http://localhost:8080/reset-password?email=" + email;
+    public String processForgotPassword(@RequestParam("email") String email,
+                                        jakarta.servlet.http.HttpServletRequest request) {
+        // 1️⃣Captura dados do cliente (IP e User‑Agent) para auditoria e token
+        String clientIp   = request.getRemoteAddr();
+        String userAgent  = request.getHeader("User-Agent");
 
-        System.out.println("=================================================");
-        System.out.println(">>> [SIMULAÇÃO DE E-MAIL DE RECUPERAÇÃO]");
-        System.out.println(">>> Destinatário: " + email);
-        System.out.println(">>> Clique no link para redefinir: " + resetLink);
-        System.out.println("=================================================");
+        // Gera o token (null → e‑mail inexistente)
+        String token = passwordResetService.createResetToken(email, clientIp, userAgent);
 
+        // Se houver token válido, envia o e‑mail de recuperação
+        if (token != null) {
+            mailService.sendPasswordResetEmail(email, token);
+        }
+
+        // Registra a tentativa (independente de sucesso)
+        auditService.logEvent(null, "PASSWORD_RESET_REQUEST", clientIp, userAgent);
+
+        // Redireciona – a página pode exibir a mensagem “seu e‑mail recebeu instruções”
         return "redirect:/forgot-password?sent=true";
     }
 
+
     @GetMapping("/reset-password")
-    public String resetPasswordPage(@RequestParam("email") String email, Model model) {
-        model.addAttribute("email", email);
+    public String resetPasswordPage(@RequestParam("token") String token, Model model) {
+        // Obter o email ou o ID do usuário associado ao token para exibir na página
+        Optional<PasswordResetToken> tokenOpt = passwordResetTokenRepository.findByToken(token);
+        if (tokenOpt.isEmpty() || tokenOpt.get().isUsed() || tokenOpt.get().getExpiresAt().isBefore(Instant.now())) {
+             return "redirect:/login?error=token-invalido";
+        }
+        
+        User user = userRepository.findById(tokenOpt.get().getUserID())
+                .orElseThrow(() -> new IllegalArgumentException("Usuário não encontrado"));
+
+        model.addAttribute("token", token);
+        model.addAttribute("email", user.getEmail());
         return "auth/reset-password";
     }
 
     @PostMapping("/reset-password")
-    public String processResetPassword(@RequestParam("email") String email,
+    public String processResetPassword(@RequestParam("token") String token,
                                        @RequestParam("password") String newPassword,
+                                       jakarta.servlet.http.HttpServletRequest request,
                                        Model model) {
 
+        String clientIp = request.getRemoteAddr();
+        String userAgent = request.getHeader("User-Agent");
+
         if (newPassword == null || newPassword.length() < 8) {
-            model.addAttribute("email", email);
             model.addAttribute("error", "A senha deve conter no mínimo 8 caracteres.");
             return "auth/reset-password";
         }
-
-        Optional<User> userOpt = userRepository.findByEmail(email);
-        if (userOpt.isPresent()) {
-            User user = userOpt.get();
-            user.setPasswordHash(passwordEncoder.encode(newPassword));
-            userRepository.save(user);
-            System.out.println(">>> [SENHA ATUALIZADA] Sucesso para: " + email);
+        
+        try {
+            passwordResetService.resetPassword(token, newPassword, clientIp, userAgent);
+            auditService.logEvent(null, "PASSWORD_RESET_SUCCESS", clientIp, userAgent);
+            return "redirect:/login?resetSuccess=true";
+        } catch (Exception e) {
+            auditService.logEvent(null, "PASSWORD_RESET_FAILURE", clientIp, userAgent);
+            model.addAttribute("error", e.getMessage());
+            return "auth/reset-password";
         }
-
-        return "redirect:/login?resetSuccess=true";
     }
 
     @GetMapping("/login-2fa")
@@ -121,11 +184,11 @@ public class AuthController {
 
         String username = (authentication != null) ? authentication.getName() : "Usuário";
 
-        System.out.println("=================================================");
-        System.out.println(">>> [CÓDIGO 2FA GERADO]");
-        System.out.println(">>> Usuário: " + username);
-        System.out.println(">>> CÓDIGO DE ACESSO: " + code2FA);
-        System.out.println(">>> Válido por 5 minutos.");
+
+        System.out.println("CÓDIGO 2FA GERADO");
+        System.out.println(" Usuário: " + username);
+        System.out.println("CÓDIGO DE ACESSO: " + code2FA);
+        System.out.println("Válido por 5 minutos.");
         System.out.println("=================================================");
 
         return "auth/two-factor";
