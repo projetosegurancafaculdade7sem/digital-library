@@ -13,6 +13,8 @@ public interface SecurityAuditLogRepository extends JpaRepository<SecurityAuditL
 
     Optional<SecurityAuditLog> findTopByOrderByTimestampDesc();
 
+    List<SecurityAuditLog> findAllByOrderByTimestampAsc();
+
     List<SecurityAuditLog> findByUserIdOrderByTimestampDesc(UUID userID);
 
     List<SecurityAuditLog> findByEventTypeOrderByTimestampDesc(String eventType);

@@ -3,8 +3,8 @@ import com.example.demo.model.PasswordResetToken;
 import com.example.demo.model.User;
 import com.example.demo.repository.PasswordResetTokenRepository;
 import com.example.demo.repository.UserRepository;
+import com.example.demo.security.PasswordHashingSupport;
 import lombok.RequiredArgsConstructor;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.security.SecureRandom;
@@ -21,7 +21,7 @@ public class PasswordResetService {
     private static final SecureRandom secureRandom = new SecureRandom();
     private final PasswordResetTokenRepository passwordResetTokenRepository;
     private final UserRepository userRepository;
-    private final PasswordEncoder passwordEncoder;
+    private final PasswordHashingSupport passwordHashingSupport;
     // Helper method for secure token generation
     private String generateSecureToken() {
         byte[] randomBytes = new byte[32];
@@ -61,7 +61,9 @@ public class PasswordResetService {
         }
         User user = userRepository.findById(resetToken.getUserID())
                 .orElseThrow(() -> new IllegalArgumentException("Usuário associado não encontrado."));
-        user.setPasswordHash(passwordEncoder.encode(newPassword));
+        PasswordHashingSupport.EncodedPassword encoded = passwordHashingSupport.encode(newPassword);
+        user.setPasswordHash(encoded.hash());
+        user.setPasswordSalt(encoded.salt());
         userRepository.save(user);
         resetToken.setUsed(true);
         passwordResetTokenRepository.save(resetToken);

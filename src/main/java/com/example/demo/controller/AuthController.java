@@ -1,40 +1,52 @@
 package com.example.demo.controller;
 
+import com.example.demo.dto.request.RegisterRequest;
 import com.example.demo.model.PasswordResetToken;
 import com.example.demo.model.User;
 import com.example.demo.repository.PasswordResetTokenRepository;
 import com.example.demo.repository.UserRepository;
 import com.example.demo.service.AuditService;
+import com.example.demo.service.AuthService;
 import com.example.demo.service.MailService;
 import com.example.demo.service.PasswordResetService;
+import com.example.demo.service.TwoFactorService;
+import com.example.demo.service.UserService;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import org.springframework.security.core.Authentication;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 
-import java.security.SecureRandom;
 import java.time.Instant;
-import java.time.LocalDateTime;
 import java.util.Optional;
 
 @Controller
 public class AuthController {
 
     private final UserRepository userRepository;
-    private final PasswordEncoder passwordEncoder;
-    private final SecureRandom secureRandom = new SecureRandom();
+    private final UserService userService;
+    private final AuthService authService;
+    private final TwoFactorService twoFactorService;
     private final PasswordResetService passwordResetService;
     private final PasswordResetTokenRepository passwordResetTokenRepository;
     private final MailService mailService;
     private final AuditService auditService;
 
-    public AuthController(UserRepository userRepository, PasswordEncoder passwordEncoder, PasswordResetService passwordResetService, PasswordResetTokenRepository passwordResetTokenRepository, MailService mailService, AuditService auditService) {
+    public AuthController(UserRepository userRepository,
+                          UserService userService,
+                          AuthService authService,
+                          TwoFactorService twoFactorService,
+                          PasswordResetService passwordResetService,
+                          PasswordResetTokenRepository passwordResetTokenRepository,
+                          MailService mailService,
+                          AuditService auditService) {
         this.userRepository = userRepository;
-        this.passwordEncoder = passwordEncoder;
+        this.userService = userService;
+        this.authService = authService;
+        this.twoFactorService = twoFactorService;
         this.passwordResetService = passwordResetService;
         this.passwordResetTokenRepository = passwordResetTokenRepository;
         this.mailService = mailService;
@@ -46,11 +58,6 @@ public class AuthController {
         return "auth/login";
     }
 
-
-
-    // TELA E PROCESSAMENTO DE CADASTRO
-
-
     @GetMapping("/register")
     public String registerPage() {
         return "auth/register";
@@ -60,50 +67,47 @@ public class AuthController {
     public String registerUser(@RequestParam("name") String name,
                                @RequestParam("email") String email,
                                @RequestParam("password") String password,
+                               @RequestParam(value = "acceptTerms", defaultValue = "false") boolean acceptTerms,
+                               HttpServletRequest request,
                                Model model) {
-
-        try{
-        if (userRepository.findByEmail(email).isPresent()) {
-            model.addAttribute("error", "Este e-mail já está cadastrado no sistema.");
-
-            User newUser = new User();
-            newUser.setName(name);
-            newUser.setEmail(email);
-            newUser.setPasswordHash(passwordEncoder.encode(password));
-            newUser.setRole("ROLE_USER");
-            newUser.setTwoFactorEnabled(false);
-            newUser.setAccountNonLocked(true);
-            newUser.setFailedLoginAttempts(0);
-            newUser.setCreatedAt(Instant.now());
-
-            userRepository.save(newUser);
-            System.out.println(" USUÁRIO REGISTRADO COM SUCESSO: " + email);
-
-            return "redirect:/login?registered=true";
-        } }catch (Exception e) {
-            e.printStackTrace();
-            model.addAttribute("errorMessage", "Erro ao salvar no banco: " + e.getMessage());
-
-            return "auth/register";
-        }
-
         if (password == null || password.length() < 8) {
             model.addAttribute("error", "A senha deve conter no mínimo 8 caracteres.");
             return "auth/register";
         }
+        if (!acceptTerms) {
+            model.addAttribute("error", "É necessário aceitar os termos de uso e a política de privacidade.");
+            return "auth/register";
+        }
+        if (userRepository.findByEmail(email).isPresent()) {
+            model.addAttribute("error", "Este e-mail já está cadastrado no sistema.");
+            return "auth/register";
+        }
 
-        String hashedPassword = passwordEncoder.encode(password);
+        try {
+            RegisterRequest registerRequest = new RegisterRequest();
+            registerRequest.setEmail(email);
+            registerRequest.setPassword(password);
+            registerRequest.setAcceptTerms(true);
 
-        User user = new User();
-        user.setName(name);
-        user.setEmail(email);
-        user.setPasswordHash(hashedPassword);
+            UserService.RegistrationResult result = userService.registerUser(
+                    registerRequest,
+                    name,
+                    request.getRemoteAddr(),
+                    request.getHeader("User-Agent")
+            );
 
-        userRepository.save(user);
-
-        return "redirect:/login?registered=true";
+            // Sempre o plaintext capturado no cadastro — nunca o valor cifrado do banco
+            String totpPlain = result.totpSecretPlaintext();
+            String qr = twoFactorService.generateQrCodeDataUrl(totpPlain, result.user().getEmail());
+            model.addAttribute("qrCode", qr);
+            model.addAttribute("totpSecret", totpPlain);
+            model.addAttribute("email", result.user().getEmail());
+            return "auth/setup-2fa";
+        } catch (Exception e) {
+            model.addAttribute("error", e.getMessage());
+            return "auth/register";
+        }
     }
-
 
     @GetMapping("/forgot-password")
     public String forgotPasswordPage() {
@@ -112,35 +116,26 @@ public class AuthController {
 
     @PostMapping("/forgot-password")
     public String processForgotPassword(@RequestParam("email") String email,
-                                        jakarta.servlet.http.HttpServletRequest request) {
-        // 1️⃣Captura dados do cliente (IP e User‑Agent) para auditoria e token
-        String clientIp   = request.getRemoteAddr();
-        String userAgent  = request.getHeader("User-Agent");
+                                        HttpServletRequest request) {
+        String clientIp = request.getRemoteAddr();
+        String userAgent = request.getHeader("User-Agent");
 
-        // Gera o token (null → e‑mail inexistente)
         String token = passwordResetService.createResetToken(email, clientIp, userAgent);
-
-        // Se houver token válido, envia o e‑mail de recuperação
         if (token != null) {
             mailService.sendPasswordResetEmail(email, token);
         }
 
-        // Registra a tentativa (independente de sucesso)
         auditService.logEvent(null, "PASSWORD_RESET_REQUEST", clientIp, userAgent);
-
-        // Redireciona – a página pode exibir a mensagem “seu e‑mail recebeu instruções”
         return "redirect:/forgot-password?sent=true";
     }
 
-
     @GetMapping("/reset-password")
     public String resetPasswordPage(@RequestParam("token") String token, Model model) {
-        // Obter o email ou o ID do usuário associado ao token para exibir na página
         Optional<PasswordResetToken> tokenOpt = passwordResetTokenRepository.findByToken(token);
         if (tokenOpt.isEmpty() || tokenOpt.get().isUsed() || tokenOpt.get().getExpiresAt().isBefore(Instant.now())) {
-             return "redirect:/login?error=token-invalido";
+            return "redirect:/login?error=token-invalido";
         }
-        
+
         User user = userRepository.findById(tokenOpt.get().getUserID())
                 .orElseThrow(() -> new IllegalArgumentException("Usuário não encontrado"));
 
@@ -152,17 +147,17 @@ public class AuthController {
     @PostMapping("/reset-password")
     public String processResetPassword(@RequestParam("token") String token,
                                        @RequestParam("password") String newPassword,
-                                       jakarta.servlet.http.HttpServletRequest request,
+                                       HttpServletRequest request,
                                        Model model) {
-
         String clientIp = request.getRemoteAddr();
         String userAgent = request.getHeader("User-Agent");
 
         if (newPassword == null || newPassword.length() < 8) {
             model.addAttribute("error", "A senha deve conter no mínimo 8 caracteres.");
+            model.addAttribute("token", token);
             return "auth/reset-password";
         }
-        
+
         try {
             passwordResetService.resetPassword(token, newPassword, clientIp, userAgent);
             auditService.logEvent(null, "PASSWORD_RESET_SUCCESS", clientIp, userAgent);
@@ -170,52 +165,59 @@ public class AuthController {
         } catch (Exception e) {
             auditService.logEvent(null, "PASSWORD_RESET_FAILURE", clientIp, userAgent);
             model.addAttribute("error", e.getMessage());
+            model.addAttribute("token", token);
             return "auth/reset-password";
         }
     }
 
+    /**
+     * Etapa 2FA via TOTP (authenticator).
+     */
     @GetMapping("/login-2fa")
-    public String twoFactorPage(HttpSession session, Authentication authentication, Model model) {
-        int codeInt = secureRandom.nextInt(1_000_000);
-        String code2FA = String.format("%06d", codeInt);
-
-        session.setAttribute("2FA_CODE", code2FA);
-        session.setAttribute("2FA_EXPIRY", LocalDateTime.now().plusMinutes(5));
-
-        String username = (authentication != null) ? authentication.getName() : "Usuário";
-
-
-        System.out.println("CÓDIGO 2FA GERADO");
-        System.out.println(" Usuário: " + username);
-        System.out.println("CÓDIGO DE ACESSO: " + code2FA);
-        System.out.println("Válido por 5 minutos.");
-        System.out.println("=================================================");
-
+    public String twoFactorPage(Authentication authentication, Model model) {
+        if (authentication == null) {
+            return "redirect:/login";
+        }
+        model.addAttribute("email", authentication.getName());
         return "auth/two-factor";
     }
 
     @PostMapping("/login-2fa")
     public String verifyTwoFactor(@RequestParam("code") String inputCode,
+                                  Authentication authentication,
                                   HttpSession session,
+                                  HttpServletRequest request,
                                   Model model) {
+        if (authentication == null) {
+            return "redirect:/login";
+        }
 
-        String expectedCode = (String) session.getAttribute("2FA_CODE");
-        LocalDateTime expiry = (LocalDateTime) session.getAttribute("2FA_EXPIRY");
+        String email = authentication.getName();
+        String ip = request.getRemoteAddr();
+        String ua = request.getHeader("User-Agent");
 
-        if (expectedCode == null || expiry == null || LocalDateTime.now().isAfter(expiry)) {
-            model.addAttribute("error", "O código expirou. Faça login novamente.");
+        User user = userRepository.findByEmail(email).orElse(null);
+        if (user == null) {
+            return "redirect:/login?error=true";
+        }
+
+        if (!user.isAccountNonLocked()) {
+            model.addAttribute("error", "Conta temporariamente bloqueada. Tente novamente mais tarde.");
             return "auth/two-factor";
         }
 
-        if (!expectedCode.equals(inputCode.trim())) {
-            model.addAttribute("error", "Código de verificação incorreto. Tente novamente.");
+        boolean valid = !user.isTwoFactorEnabled()
+                || authService.verify2FACode(user, inputCode);
+
+        if (!valid) {
+            authService.registerFailed2FAAttempt(email, ip, ua);
+            model.addAttribute("error", "Código TOTP inválido ou expirado. Use o aplicativo autenticador.");
+            model.addAttribute("email", email);
             return "auth/two-factor";
         }
 
-        session.removeAttribute("2FA_CODE");
-        session.removeAttribute("2FA_EXPIRY");
+        authService.registerSuccessful2FA(email, ip, ua);
         session.setAttribute("2FA_VERIFIED", true);
-
         return "redirect:/dashboard";
     }
 
@@ -228,7 +230,6 @@ public class AuthController {
 
         String userEmail = (authentication != null) ? authentication.getName() : "Usuário Acadêmico";
         model.addAttribute("username", userEmail);
-
         return "dashboard";
     }
 }

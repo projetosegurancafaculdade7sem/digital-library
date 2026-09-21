@@ -1,33 +1,31 @@
 package com.example.demo.security;
 
-
+import com.example.demo.service.TwoFactorService;
 import org.springframework.stereotype.Component;
-import org.jboss.aerogear.security.otp.Totp;
-import org.jboss.aerogear.security.otp.api.Base32;
 
-
+/**
+ * Fachada mantida por compatibilidade. A implementação canônica de TOTP
+ * é {@link TwoFactorService} — evita duplicidade de algoritmos 2FA.
+ */
 @Component
 public class TotpManager {
 
-    //generate a random secret for the user
-    public String generateSecretKey(){
-        return Base32.random();
+    private final TwoFactorService twoFactorService;
+
+    public TotpManager(TwoFactorService twoFactorService) {
+        this.twoFactorService = twoFactorService;
     }
 
-    public boolean verifyCode(String secret, String code){
-        if (secret == null || code == null || code.trim().isEmpty()){
-            return false;
-        }
-        Totp totp = new Totp(secret);
-        try {
-            return totp.verify(code.trim());
-        } catch (NumberFormatException e){
-            return false;
-        }
-
-
+    public String generateSecretKey() {
+        return twoFactorService.generateSecret();
     }
-    public String getQrCodeUrl(String email, String secret, String appName){
-        return String.format("otpauth://totp/%s:%s?secret=%s&issuer=%s", appName, email, secret, appName);
+
+    public boolean verifyCode(String secret, String code) {
+        return twoFactorService.verifyCode(secret, code);
+    }
+
+    public String getQrCodeUrl(String email, String secret, String appName) {
+        return String.format("otpauth://totp/%s:%s?secret=%s&issuer=%s",
+                appName, email, secret, appName);
     }
 }

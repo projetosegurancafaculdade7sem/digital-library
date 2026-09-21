@@ -22,7 +22,6 @@
                     <p class="text-muted small">Preencha seus dados para acessar a biblioteca</p>
                 </div>
 
-                <!-- Alerta de erro caso a validação falhe -->
                 <div th:if="${error}" class="alert alert-danger small py-2" role="alert">
                     <i class="bi bi-exclamation-triangle-fill me-2"></i>
                     <span th:text="${error}"></span>
@@ -53,6 +52,13 @@
                             <span class="input-group-text bg-white text-muted"><i class="bi bi-shield-lock"></i></span>
                             <input type="password" class="form-control" id="password" name="password" placeholder="Mínimo 8 caracteres" minlength="8" required>
                         </div>
+                    </div>
+
+                    <div class="form-check mb-3">
+                        <input class="form-check-input" type="checkbox" id="acceptTerms" name="acceptTerms" value="true" required>
+                        <label class="form-check-label small" for="acceptTerms">
+                            Li e aceito os termos de uso e a política de privacidade (LGPD).
+                        </label>
                     </div>
 
                     <div class="d-grid mt-4">

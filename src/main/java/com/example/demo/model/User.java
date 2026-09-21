@@ -33,6 +33,7 @@ public class User {
     @Column(name = "password_salt")
     private String passwordSalt;
 
+    @Convert(converter = com.example.demo.security.AttributeEncryptor.class)
     @Column(name = "two_factor_secret")
     private String twoFactorSecret;
 
