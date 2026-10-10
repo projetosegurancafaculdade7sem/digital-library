@@ -1,5 +1,6 @@
 package com.example.demo.model;
 
+import com.example.demo.security.AttributeEncryptor;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -27,12 +28,16 @@ public class User {
     @Column(name = "email", nullable = false, unique = true)
     private String email;
 
+    @Column(name = "phone")
+    private String phone;
+
     @Column(name = "password_hash", nullable = false)
     private String passwordHash;
 
     @Column(name = "password_salt")
     private String passwordSalt;
 
+    @Convert(converter = AttributeEncryptor.class)
     @Column(name = "two_factor_secret")
     private String twoFactorSecret;
 
@@ -55,6 +60,21 @@ public class User {
     @Column(name = "locked_until")
     private Instant lockedUntil;
 
+    // --- Campos de Conformidade LGPD ---
+    @Builder.Default
+    @Column(name = "terms_accepted", nullable = false)
+    private boolean termsAccepted = false;
+
+    @Column(name = "terms_accepted_at")
+    private Instant termsAcceptedAt;
+
+    @Column(name = "terms_version")
+    private String termsVersion;
+
+    @Column(name = "consent_ip")
+    private String consentIp;
+
+    // --- Auditoria Temporal ---
     @Builder.Default
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt = Instant.now();
@@ -62,7 +82,7 @@ public class User {
     @Column(name = "updated_at")
     private Instant updatedAt;
 
-    // Getters e Setters
+    // Getters e Setters manuais
     public UUID getId() {
         return id;
     }
@@ -85,6 +105,14 @@ public class User {
 
     public void setEmail(String email) {
         this.email = email;
+    }
+
+    public String getPhone() {
+        return phone;
+    }
+
+    public void setPhone(String phone) {
+        this.phone = phone;
     }
 
     public String getPasswordHash() {
@@ -165,6 +193,38 @@ public class User {
 
     public void setLockedUntil(Instant lockedUntil) {
         this.lockedUntil = lockedUntil;
+    }
+
+    public boolean isTermsAccepted() {
+        return termsAccepted;
+    }
+
+    public void setTermsAccepted(boolean termsAccepted) {
+        this.termsAccepted = termsAccepted;
+    }
+
+    public Instant getTermsAcceptedAt() {
+        return termsAcceptedAt;
+    }
+
+    public void setTermsAcceptedAt(Instant termsAcceptedAt) {
+        this.termsAcceptedAt = termsAcceptedAt;
+    }
+
+    public String getTermsVersion() {
+        return termsVersion;
+    }
+
+    public void setTermsVersion(String termsVersion) {
+        this.termsVersion = termsVersion;
+    }
+
+    public String getConsentIp() {
+        return consentIp;
+    }
+
+    public void setConsentIp(String consentIp) {
+        this.consentIp = consentIp;
     }
 
     public Instant getCreatedAt() {

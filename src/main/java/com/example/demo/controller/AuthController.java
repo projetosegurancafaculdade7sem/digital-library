@@ -2,6 +2,7 @@ package com.example.demo.controller;
 
 import com.example.demo.model.User;
 import com.example.demo.repository.UserRepository;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -12,6 +13,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 
 import java.security.SecureRandom;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.Optional;
 
@@ -40,25 +42,53 @@ public class AuthController {
     @PostMapping("/register")
     public String registerUser(@RequestParam("name") String name,
                                @RequestParam("email") String email,
+                               @RequestParam(value = "phone", required = false) String phone,
                                @RequestParam("password") String password,
+                               @RequestParam(value = "termsAccepted", defaultValue = "false") boolean termsAccepted,
+                               HttpServletRequest request,
                                Model model) {
 
-        if (userRepository.findByEmail(email).isPresent()) {
-            model.addAttribute("error", "Este e-mail já está cadastrado no sistema.");
+        // 1. Validação do consentimento LGPD
+        if (!termsAccepted) {
+            model.addAttribute("error", "É obrigatório aceitar os termos de privacidade (LGPD) para criar a conta.");
             return "auth/register";
         }
 
+        // 2. Validação da política de senhas (mínimo 8 caracteres)
         if (password == null || password.length() < 8) {
             model.addAttribute("error", "A senha deve conter no mínimo 8 caracteres.");
             return "auth/register";
         }
 
-        String hashedPassword = passwordEncoder.encode(password);
+        // 3. Validação de unicidade de e-mail (interrompe o fluxo sem duplicar)
+        if (userRepository.findByEmail(email).isPresent()) {
+            model.addAttribute("error", "Este e-mail já está cadastrado no sistema.");
+            return "auth/register";
+        }
 
+        // 4. Captura do IP do usuário para comprovação de consentimento
+        String clientIp = request.getHeader("X-Forwarded-For");
+        if (clientIp == null || clientIp.isBlank() || "unknown".equalsIgnoreCase(clientIp)) {
+            clientIp = request.getRemoteAddr();
+        } else if (clientIp.contains(",")) {
+            clientIp = clientIp.split(",")[0].trim();
+        }
+
+        // 5. Instanciação e persistência do usuário com os campos de conformidade
         User user = new User();
         user.setName(name);
         user.setEmail(email);
-        user.setPasswordHash(hashedPassword);
+        user.setPhone(phone);
+        user.setPasswordHash(passwordEncoder.encode(password));
+        user.setRole("ROLE_USER");
+        user.setAccountNonLocked(true);
+        user.setCreatedAt(Instant.now());
+
+        // Metadados LGPD
+        user.setTermsAccepted(true);
+        user.setTermsAcceptedAt(Instant.now());
+        user.setTermsVersion("v1.0-2026");
+        user.setConsentIp(clientIp);
 
         userRepository.save(user);
 
@@ -104,6 +134,7 @@ public class AuthController {
         if (userOpt.isPresent()) {
             User user = userOpt.get();
             user.setPasswordHash(passwordEncoder.encode(newPassword));
+            user.setUpdatedAt(Instant.now());
             userRepository.save(user);
             System.out.println(">>> [SENHA ATUALIZADA] Sucesso para: " + email);
         }
