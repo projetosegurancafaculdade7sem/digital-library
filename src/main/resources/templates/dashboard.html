@@ -9,7 +9,6 @@
 </head>
 <body class="bg-light">
 
-<!-- Navbar -->
 <nav class="navbar navbar-expand-lg navbar-dark bg-dark px-4 shadow-sm">
     <a class="navbar-brand fw-bold" href="#">
         <i class="bi bi-book-half me-2"></i>Digital Library
@@ -19,6 +18,8 @@
                 <i class="bi bi-person-check-fill text-success me-1"></i>
                 <span th:text="${username}">usuario@faculdade.edu.br</span>
             </span>
+        <a th:href="@{/privacy}" class="btn btn-outline-light btn-sm">Privacidade</a>
+        <a th:href="@{/admin/audit/analyze}" class="btn btn-outline-info btn-sm">Auditoria</a>
         <form th:action="@{/logout}" method="post" class="m-0">
             <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}" />
             <button type="submit" class="btn btn-outline-danger btn-sm">
@@ -28,7 +29,6 @@
     </div>
 </nav>
 
-<!-- Conteúdo Principal -->
 <div class="container my-5">
     <div class="card shadow-sm border-0 rounded-3 p-4 bg-white">
         <div class="d-flex align-items-center mb-3">
@@ -37,7 +37,7 @@
             </div>
             <div>
                 <h3 class="fw-bold mb-0">Bem-vindo à Digital Library!</h3>
-                <p class="text-muted small mb-0">Autenticação multifator (2FA) e criptografia Argon2id concluídas com sucesso.</p>
+                <p class="text-muted small mb-0">Autenticação multifator (TOTP) e criptografia Argon2id concluídas com sucesso.</p>
             </div>
         </div>
 
@@ -53,13 +53,13 @@
             <div class="col-md-4">
                 <div class="p-3 border rounded-3 bg-light">
                     <h6 class="fw-bold"><i class="bi bi-shield-lock me-2 text-success"></i>Sessão Segura</h6>
-                    <p class="small text-muted mb-0">Proteção ativa contra CSRF, brute-force e fixação de sessão.</p>
+                    <p class="small text-muted mb-0">HTTPS, CSRF, rate-limit e bloqueio após 5 tentativas.</p>
                 </div>
             </div>
             <div class="col-md-4">
                 <div class="p-3 border rounded-3 bg-light">
-                    <h6 class="fw-bold"><i class="bi bi-database me-2 text-info"></i>Persistência</h6>
-                    <p class="small text-muted mb-0">Pronto para conectar ao Supabase (PostgreSQL).</p>
+                    <h6 class="fw-bold"><i class="bi bi-person-lock me-2 text-info"></i>LGPD</h6>
+                    <p class="small text-muted mb-0"><a th:href="@{/privacy}">Consultar, exportar ou revogar consentimento</a>.</p>
                 </div>
             </div>
         </div>
