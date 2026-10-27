@@ -17,16 +17,16 @@ import java.util.Base64;
 /**
  * Criptografia de atributos sensíveis em repouso (req. 3.4–3.8).
  *
- * <ul>
- *   <li>Algoritmo: AES-256 / modo GCM (AEAD) — confidencialidade + integridade.</li>
- *   <li>IV: 12 bytes aleatórios (recomendação NIST SP 800-38D) por registro.</li>
- *   <li>Tag: 128 bits.</li>
- *   <li>Chave: 32 bytes, fornecida via {@code security.encryption.key-base64}
- *       (variável de ambiente / properties), nunca hardcoded no código-fonte.</li>
- * </ul>
+ *
+ *   Algoritmo: AES-256 / modo GCM (AEAD) — confidencialidade + integridade.
+ *   IV: 12 bytes aleatórios (recomendação NIST SP 800-38D) por registro.
+ *   Tag: 128 bits.
+ *   Chave: 32 bytes, fornecida via {@code security.encryption.key-base64}
+ *       (variável de ambiente / properties), nunca hardcoded no código-fonte.
+ *
  *
  * Justificativa: AES-GCM é amplamente aceito para dados em repouso; GCM evita
- * padding oracle e autentica o ciphertext. A chave permanece fora do repositório
+ * padding oracle e autentica o ciphertext. A chave permanece fora do repositorio
  * em produção (env/secret manager).
  */
 @Component
@@ -50,7 +50,7 @@ public class AttributeEncryptor implements AttributeConverter<String, String> {
         SHARED_KEY = this.secretKeyBytes;
     }
 
-    /** Construtor sem args exigido pelo JPA caso a BeanContainer não injete o bean. */
+    /** Construtor sem args caso necessario */
     public AttributeEncryptor() {
         this.secretKeyBytes = SHARED_KEY;
     }
