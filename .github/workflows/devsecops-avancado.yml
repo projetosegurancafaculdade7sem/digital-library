@@ -32,8 +32,6 @@ jobs:
 
   # ---------------------------------------------------
   # 2. SUPPLY CHAIN SECURITY (TRIVY SBOM)
-  # Executando Trivy via Docker para evitar erro
-  # durante a instalacao do binario.
   # ---------------------------------------------------
   trivy-sbom:
     name: Gerar SBOM (Trivy)
@@ -43,6 +41,7 @@ jobs:
       - name: Checkout do codigo
         uses: actions/checkout@v4
 
+      # Restaura o cache Maven antes de baixar dependencias
       - name: Configurar Java e Cache do Maven
         uses: actions/setup-java@v4
         with:
@@ -50,23 +49,41 @@ jobs:
           distribution: 'temurin'
           cache: 'maven'
 
+      # Preenche o repositorio local do Maven
       - name: Baixar dependencias do Maven
-        run: mvn dependency:go-offline
+        run: |
+          mvn -B -ntp dependency:go-offline
 
+      # Confirma que o cache foi criado
+      - name: Verificar cache Maven
+        run: |
+          if [ ! -d "$HOME/.m2/repository" ]; then
+            echo "ERRO: Cache Maven nao encontrado!"
+            exit 1
+          fi
+
+          echo "Cache Maven encontrado:"
+          du -sh "$HOME/.m2/repository"
+
+      # Baixa a imagem oficial do Trivy
       - name: Baixar imagem oficial do Trivy
         run: docker pull aquasec/trivy:0.76.1
 
+      # Gera SBOM utilizando o cache Maven do runner
       - name: Gerar SBOM CycloneDX com Trivy
         run: |
           docker run --rm \
             -v "$PWD:/work" \
+            -v "$HOME/.m2:/root/.m2:ro" \
             -w /work \
             aquasec/trivy:0.76.1 \
             fs \
+            --offline-scan \
             --format cyclonedx \
             --output sbom-cyclonedx.json \
             .
 
+      # Verifica se o SBOM foi criado
       - name: Verificar arquivo SBOM
         run: |
           if [ ! -s sbom-cyclonedx.json ]; then
@@ -77,6 +94,7 @@ jobs:
           echo "SBOM gerado com sucesso!"
           ls -lh sbom-cyclonedx.json
 
+      # Disponibiliza o arquivo para download
       - name: Disponibilizar Artefato JSON
         uses: actions/upload-artifact@v4
         with:
@@ -86,7 +104,7 @@ jobs:
           retention-days: 30
 
   # ---------------------------------------------------
-  # 3. DAST (OWASP ZAP) COM APLICACAO EM EXECUCAO
+  # 3. DAST (OWASP ZAP)
   # ---------------------------------------------------
   zap-dast:
     name: DAST (OWASP ZAP)
@@ -122,7 +140,7 @@ jobs:
           cache: 'maven'
 
       - name: Compilar a aplicacao
-        run: mvn clean package -DskipTests
+        run: mvn -B -ntp clean package -DskipTests
 
       - name: Subir aplicacao em Background
         env:
