@@ -45,13 +45,12 @@ jobs:
           cache: 'maven'
 
       - name: Baixar dependências offline
-        run:  |
-          docker run --rm -v "$PWD:/work" aquasec/trivy:0.63.0 \
-            fs --format cyclonedx --output /work/sbom-cyclonedx.json /work
+        run: mvn dependency:go-offline
 
       - name: Gerar SBOM (CycloneDX)
-        uses: aquasecurity/trivy-action@v0.36.0   # versão fixa
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
+          version: 'v0.63.0'
           scan-type: 'fs'
           scan-ref: '.'
           format: 'cyclonedx'
