@@ -1,40 +1,46 @@
+
 name: DevSecOps Avancado - DAST, Privacidade e SBOM
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 permissions:
   contents: read
 
 jobs:
+
   # ---------------------------------------------------
   # 1. SCANNER DE PRIVACIDADE E DADOS (BEARER)
   # ---------------------------------------------------
   bearer:
     name: Privacidade e LGPD (Bearer)
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout do código
+      - name: Checkout do codigo
         uses: actions/checkout@v4
 
       - name: Rodar Bearer Scan
         uses: bearer/bearer-action@v2
         with:
           diff: false
-          severity: critical,high   # só falhas críticas/altas bloqueiam
-          exit-code: 1              # bloqueia o build se encontrar
+          severity: critical,high
+          exit-code: 1
 
   # ---------------------------------------------------
   # 2. SUPPLY CHAIN SECURITY (TRIVY SBOM)
+  # Executando Trivy via Docker para evitar erro
+  # durante a instalacao do binario.
   # ---------------------------------------------------
   trivy-sbom:
     name: Gerar SBOM (Trivy)
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout do código
+      - name: Checkout do codigo
         uses: actions/checkout@v4
 
       - name: Configurar Java e Cache do Maven
@@ -44,33 +50,48 @@ jobs:
           distribution: 'temurin'
           cache: 'maven'
 
-      - name: Baixar dependências offline
+      - name: Baixar dependencias do Maven
         run: mvn dependency:go-offline
 
-      - name: Gerar SBOM (CycloneDX)
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          version: 'v0.63.0'
-          scan-type: 'fs'
-          scan-ref: '.'
-          format: 'cyclonedx'
-          output: 'sbom-cyclonedx.json'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Baixar imagem oficial do Trivy
+        run: docker pull aquasec/trivy:0.76.1
+
+      - name: Gerar SBOM CycloneDX com Trivy
+        run: |
+          docker run --rm \
+            -v "$PWD:/work" \
+            -w /work \
+            aquasec/trivy:0.76.1 \
+            fs \
+            --format cyclonedx \
+            --output sbom-cyclonedx.json \
+            .
+
+      - name: Verificar arquivo SBOM
+        run: |
+          if [ ! -s sbom-cyclonedx.json ]; then
+            echo "ERRO: Arquivo SBOM nao foi gerado!"
+            exit 1
+          fi
+
+          echo "SBOM gerado com sucesso!"
+          ls -lh sbom-cyclonedx.json
 
       - name: Disponibilizar Artefato JSON
         uses: actions/upload-artifact@v4
         with:
           name: sbom-artifact
           path: sbom-cyclonedx.json
-          if-no-files-found: error   # falha se o SBOM não existir
+          if-no-files-found: error
+          retention-days: 30
 
   # ---------------------------------------------------
-  # 3. DAST (OWASP ZAP) COM APLICAÇÃO EM EXECUÇÃO
+  # 3. DAST (OWASP ZAP) COM APLICACAO EM EXECUCAO
   # ---------------------------------------------------
   zap-dast:
     name: DAST (OWASP ZAP)
     runs-on: ubuntu-latest
+
     services:
       postgres:
         image: postgres:15
@@ -81,12 +102,16 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+          --health-cmd "pg_isready -U root -d demo"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
-      - name: Checkout do código
+      - name: Checkout do codigo
         uses: actions/checkout@v4
 
-      - name: Dar permissão na pasta para o ZAP
+      - name: Dar permissao na pasta para o ZAP
         run: chmod 777 .
 
       - name: Configurar Java
@@ -96,10 +121,10 @@ jobs:
           distribution: 'temurin'
           cache: 'maven'
 
-      - name: Compilar a aplicação
+      - name: Compilar a aplicacao
         run: mvn clean package -DskipTests
 
-      - name: Subir a aplicação em Background (localhost)
+      - name: Subir aplicacao em Background
         env:
           SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/demo
           SPRING_DATASOURCE_USERNAME: root
@@ -108,37 +133,50 @@ jobs:
           SPRING_MAIL_PASSWORD: dummy
           SECURITY_ENCRYPTION_KEY_BASE64: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
         run: |
-          java -jar target/*.jar --server.port=8080 --server.ssl.enabled=false > spring-boot.log 2>&1 &
+          java -jar target/*.jar \
+            --server.port=8080 \
+            --server.ssl.enabled=false \
+            > spring-boot.log 2>&1 &
 
-      - name: Aguardar aplicação ficar saudável
+      - name: Aguardar aplicacao ficar disponivel
         run: |
           for i in $(seq 1 40); do
-            code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/ || true)
+
+            code=$(curl -s -o /dev/null \
+              -w "%{http_code}" \
+              http://localhost:8080/ || true)
+
             if [ "$code" != "000" ]; then
-              echo "Aplicação respondeu (HTTP $code)"; exit 0
+              echo "Aplicacao respondeu (HTTP $code)"
+              exit 0
             fi
-            echo "Aguardando... ($i/40)"; sleep 3
+
+            echo "Aguardando aplicacao... ($i/40)"
+            sleep 3
           done
-          echo "Aplicação não subiu. Log:"; cat spring-boot.log; exit 1
 
-      - name: Criar regras do ZAP (FAIL só para falhas graves)
+          echo "Aplicacao nao subiu. Log:"
+          cat spring-boot.log
+          exit 1
+
+      - name: Criar regras do ZAP
         run: |
-          printf '40012\tFAIL\t(Cross Site Scripting - Reflected)\n'   > zap-rules.tsv
-          printf '40014\tFAIL\t(Cross Site Scripting - Persistent)\n'  >> zap-rules.tsv
-          printf '40018\tFAIL\t(SQL Injection)\n'                      >> zap-rules.tsv
-          printf '90019\tFAIL\t(Server Side Code Injection)\n'         >> zap-rules.tsv
-          printf '90020\tFAIL\t(Remote OS Command Injection)\n'        >> zap-rules.tsv
-          printf '6\tFAIL\t(Path Traversal)\n'                         >> zap-rules.tsv
+          printf '40012\tFAIL\t(Cross Site Scripting - Reflected)\n' > zap-rules.tsv
+          printf '40014\tFAIL\t(Cross Site Scripting - Persistent)\n' >> zap-rules.tsv
+          printf '40018\tFAIL\t(SQL Injection)\n' >> zap-rules.tsv
+          printf '90019\tFAIL\t(Server Side Code Injection)\n' >> zap-rules.tsv
+          printf '90020\tFAIL\t(Remote OS Command Injection)\n' >> zap-rules.tsv
+          printf '6\tFAIL\t(Path Traversal)\n' >> zap-rules.tsv
 
-      - name: Rodar Varredura Dinâmica (OWASP ZAP Baseline)
+      - name: Rodar Varredura Dinamica (OWASP ZAP Baseline)
         uses: zaproxy/action-baseline@v0.14.0
         with:
           target: 'http://localhost:8080/'
           rules_file_name: 'zap-rules.tsv'
-          cmd_options: '-I'            # avisos (WARN) não quebram; só regras FAIL
-          fail_action: true            # bloqueia o build em falha crítica
+          cmd_options: '-I'
+          fail_action: true
           allow_issue_writing: false
 
-      - name: Mostrar log da aplicação em caso de falha
+      - name: Mostrar log da aplicacao em caso de falha
         if: failure()
         run: cat spring-boot.log
