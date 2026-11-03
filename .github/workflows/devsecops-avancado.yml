@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [ "main" ]
 
+permissions:
+  contents: read
+
 jobs:
   # ---------------------------------------------------
   # 1. SCANNER DE PRIVACIDADE E DADOS (BEARER)
@@ -16,12 +19,13 @@ jobs:
     steps:
       - name: Checkout do código
         uses: actions/checkout@v4
-      
+
       - name: Rodar Bearer Scan
         uses: bearer/bearer-action@v2
-        continue-on-error: true # <-- Garante o verde no step
         with:
           diff: false
+          severity: critical,high   # só falhas críticas/altas bloqueiam
+          exit-code: 1              # bloqueia o build se encontrar
 
   # ---------------------------------------------------
   # 2. SUPPLY CHAIN SECURITY (TRIVY SBOM)
@@ -32,32 +36,33 @@ jobs:
     steps:
       - name: Checkout do código
         uses: actions/checkout@v4
-        
+
       - name: Configurar Java e Cache do Maven
         uses: actions/setup-java@v4
         with:
           java-version: '21'
           distribution: 'temurin'
           cache: 'maven'
-          
+
       - name: Baixar dependências offline
         run: mvn dependency:go-offline
-      
+
       - name: Gerar SBOM (CycloneDX)
-        uses: aquasecurity/trivy-action@master
-        continue-on-error: true # <-- Garante o verde no step
+        uses: aquasecurity/trivy-action@0.28.0   # versão fixa
         with:
           scan-type: 'fs'
+          scan-ref: '.'
           format: 'cyclonedx'
           output: 'sbom-cyclonedx.json'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          
+
       - name: Disponibilizar Artefato JSON
         uses: actions/upload-artifact@v4
         with:
           name: sbom-artifact
           path: sbom-cyclonedx.json
+          if-no-files-found: error   # falha se o SBOM não existir
 
   # ---------------------------------------------------
   # 3. DAST (OWASP ZAP) COM APLICAÇÃO EM EXECUÇÃO
@@ -79,19 +84,20 @@ jobs:
     steps:
       - name: Checkout do código
         uses: actions/checkout@v4
-        
+
       - name: Dar permissão na pasta para o ZAP
         run: chmod 777 .
-        
+
       - name: Configurar Java
         uses: actions/setup-java@v4
         with:
-          java-version: '21' 
+          java-version: '21'
           distribution: 'temurin'
-          
+          cache: 'maven'
+
       - name: Compilar a aplicação
         run: mvn clean package -DskipTests
-        
+
       - name: Subir a aplicação em Background (localhost)
         env:
           SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/demo
@@ -102,14 +108,36 @@ jobs:
           SECURITY_ENCRYPTION_KEY_BASE64: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
         run: |
           java -jar target/*.jar --server.port=8080 --server.ssl.enabled=false > spring-boot.log 2>&1 &
-          echo "Aguardando o Spring Boot subir completamente (60 segundos)..."
-          sleep 60
-          cat spring-boot.log
-          
+
+      - name: Aguardar aplicação ficar saudável
+        run: |
+          for i in $(seq 1 40); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/ || true)
+            if [ "$code" != "000" ]; then
+              echo "Aplicação respondeu (HTTP $code)"; exit 0
+            fi
+            echo "Aguardando... ($i/40)"; sleep 3
+          done
+          echo "Aplicação não subiu. Log:"; cat spring-boot.log; exit 1
+
+      - name: Criar regras do ZAP (FAIL só para falhas graves)
+        run: |
+          printf '40012\tFAIL\t(Cross Site Scripting - Reflected)\n'   > zap-rules.tsv
+          printf '40014\tFAIL\t(Cross Site Scripting - Persistent)\n'  >> zap-rules.tsv
+          printf '40018\tFAIL\t(SQL Injection)\n'                      >> zap-rules.tsv
+          printf '90019\tFAIL\t(Server Side Code Injection)\n'         >> zap-rules.tsv
+          printf '90020\tFAIL\t(Remote OS Command Injection)\n'        >> zap-rules.tsv
+          printf '6\tFAIL\t(Path Traversal)\n'                         >> zap-rules.tsv
+
       - name: Rodar Varredura Dinâmica (OWASP ZAP Baseline)
-        uses: zaproxy/action-baseline@v0.12.0
-        continue-on-error: true # <-- MUDEI PARA CÁ! Agora o GitHub ignora o erro de upload e marca como SUCESSO VERDE.
+        uses: zaproxy/action-baseline@v0.14.0
         with:
           target: 'http://localhost:8080/'
-          fail_action: false
+          rules_file_name: 'zap-rules.tsv'
+          cmd_options: '-I'            # avisos (WARN) não quebram; só regras FAIL
+          fail_action: true            # bloqueia o build em falha crítica
           allow_issue_writing: false
+
+      - name: Mostrar log da aplicação em caso de falha
+        if: failure()
+        run: cat spring-boot.log
