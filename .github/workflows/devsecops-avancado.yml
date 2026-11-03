@@ -48,7 +48,7 @@ jobs:
         run: mvn dependency:go-offline
 
       - name: Gerar SBOM (CycloneDX)
-        uses: aquasecurity/trivy-action@0.28.0   # versão fixa
+        uses: aquasecurity/trivy-action@v0.36.0   # versão fixa
         with:
           scan-type: 'fs'
           scan-ref: '.'
