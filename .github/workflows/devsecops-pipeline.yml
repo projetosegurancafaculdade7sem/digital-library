@@ -1,0 +1,69 @@
+name: DevSecOps Pipeline - SAST, SCA e Secrets
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  # ---------------------------------------------------
+  # 1. SECRETS SCANNING (TRUFFLEHOG)
+  # ---------------------------------------------------
+  secrets-scanning:
+    name: Secrets Scanning (TruffleHog)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Necessário para ler todo o histórico de commits do Git
+      
+      - name: Varredura de Segredos 
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+          extra_args: --only-verified
+          # O TruffleHog bloqueia o build (exit-code 1) automaticamente se detetar credenciais ou chaves expostas.
+
+  # ---------------------------------------------------
+  # 2. ANÁLISE DE VULNERABILIDADES EM DEPENDÊNCIAS (SCA)
+  # ---------------------------------------------------
+  sca-trivy:
+    name: SCA Dependências (Trivy)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+        
+      - name: Trivy Vulnerability Scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          format: 'table'
+          exit-code: '1' # Bloqueia o processo de CI/CD se encontrar vulnerabilidades
+          ignore-unfixed: true
+          severity: 'HIGH,CRITICAL' # Restringe o bloqueio apenas a falhas de severidade ALTA ou CRÍTICA
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Evita bloqueio de limite de tráfego (Erro 429)
+
+  # ---------------------------------------------------
+  # 3. ANÁLISE ESTÁTICA DE SEGURANÇA (SAST)
+  # ---------------------------------------------------
+  sast-semgrep:
+    name: SAST Análise Estática (Semgrep)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+        
+      - name: Rodar Semgrep CI
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: >-
+            p/java
+            p/spring-boot
+            p/security-audit
+        # O Semgrep automaticamente utiliza exit-code 1 se encontrar falhas estáticas de alta severidade no código-fonte.
