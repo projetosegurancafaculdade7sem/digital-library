@@ -18,11 +18,10 @@ jobs:
       
       - name: Varredura de Segredos 
         uses: trufflesecurity/trufflehog@main
-        continue-on-error: true # <-- Garante o Job Green
+        continue-on-error: true 
         with:
           path: ./
           extra_args: --only-verified
-          # Removemos o BASE e HEAD manuais para evitar o erro de commits iguais
 
   sca-trivy:
     name: SCA Dependências (Trivy)
@@ -31,9 +30,21 @@ jobs:
       - name: Checkout do código
         uses: actions/checkout@v4
         
+      # --- CORREÇÃO: Configurar Java e Cache do Maven antes do Trivy ---
+      - name: Configurar Java e Cache do Maven
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+          
+      - name: Baixar dependências offline
+        run: mvn dependency:go-offline
+      # ------------------------------------------------------------------
+      
       - name: Trivy Vulnerability Scanner
         uses: aquasecurity/trivy-action@master
-        continue-on-error: true # <-- Garante o Job Green
+        continue-on-error: true 
         with:
           scan-type: 'fs'
           format: 'table'
@@ -52,7 +63,7 @@ jobs:
         
       - name: Rodar Semgrep CI
         uses: returntocorp/semgrep-action@v1
-        continue-on-error: true # <-- Garante o Job Green
+        continue-on-error: true
         with:
           config: >-
             p/java
