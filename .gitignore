@@ -31,3 +31,17 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### Segredos e material criptografico (itens 2 e 3 do parecer) ###
+.env
+.env.*
+*.p12
+*.pfx
+*.jks
+*.key
+*.pem
+!.mvn/wrapper/maven-wrapper.properties
+
+### Evidencias locais (logs podem conter IPs) ###
+evidence/
+*.log

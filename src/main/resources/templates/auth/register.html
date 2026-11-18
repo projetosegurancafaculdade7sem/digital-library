@@ -55,8 +55,9 @@
             <!-- Senha -->
             <div class="mb-3">
                 <label for="password" class="form-label fw-semibold">Senha</label>
-                <input type="password" class="form-control" id="password" name="password" minlength="8" placeholder="Mínimo de 8 caracteres" required>
-                <div class="form-text">Use pelo menos 8 caracteres misturando letras e números.</div>
+                <input type="password" class="form-control" id="password" name="password" minlength="12"
+                       placeholder="Mínimo de 12 caracteres" required>
+                <div class="form-text">Use ao menos 12 caracteres com maiúscula, minúscula, dígito e símbolo.</div>
             </div>
 
             <!-- Box Resumo LGPD -->
@@ -69,7 +70,7 @@
                         <strong>controle de empréstimos</strong>.
                     </p>
                     <p class="mb-0">
-                        Senhas e segredos são protegidos com criptografia Argon2id e AES-256.
+                        Senhas são derivadas com Argon2id e segredos TOTP são cifrados com AES-256-GCM.
                         Você pode exportar ou excluir seus dados a qualquer momento no seu perfil.
                         <a href="#" class="text-decoration-underline text-primary" data-bs-toggle="modal" data-bs-target="#modalLgpd">
                             Ler termos completos
@@ -110,7 +111,7 @@
                 <p>Os dados pessoais coletados (Nome, E-mail, Celular e endereço IP) são utilizados exclusivamente para autenticação, envio de tokens de verificação em duas etapas (2FA via E-mail/SMS), gestão do acervo bibliográfico e cumprimento de registros legais de conexão (Art. 15 do Marco Civil da Internet).</p>
 
                 <h6 class="text-dark fw-bold">2. Segurança e Criptografia em Repouso</h6>
-                <p>Nenhuma senha é armazenada em texto puro. O sistema emprega algoritmo de derivação <strong>Argon2id</strong> e criptografia <strong>AES-256 (GCM)</strong> para segredos de autenticação e identificadores sensíveis.</p>
+                <p>Nenhuma senha é armazenada em texto puro. O sistema emprega o KDF <strong>Argon2id</strong> com salt único e cifra o segredo TOTP com <strong>AES-256-GCM</strong>; tokens de recuperação e auditoria usam <strong>HMAC-SHA256</strong> com chaves distintas.</p>
 
                 <h6 class="text-dark fw-bold">3. Compartilhamento de Dados</h6>
                 <p>Seus dados nunca serão comercializados ou cedidos a terceiros para fins de marketing. O envio de mensagens via SMS ou E-mail utiliza estritamente provedores integrados e homologados de comunicação transacional.</p>

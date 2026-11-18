@@ -13,4 +13,6 @@ public interface UserConsentRepository extends JpaRepository<UserConsent, UUID> 
     List<UserConsent> findByUserIdOrderByGrantedAtDesc(UUID userId);
 
     Optional<UserConsent> findTopByUserIdAndPurposeOrderByGrantedAtDesc(UUID userId, String purpose);
+
+    void deleteByUserId(UUID userId);
 }

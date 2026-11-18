@@ -28,6 +28,8 @@ public class User {
     @Column(name = "email", nullable = false, unique = true)
     private String email;
 
+    // Dado pessoal em repouso: cifrado com AES-256-GCM (item 3 do parecer).
+    @Convert(converter = AttributeEncryptor.class)
     @Column(name = "phone")
     private String phone;
 
@@ -73,6 +75,14 @@ public class User {
 
     @Column(name = "consent_ip")
     private String consentIp;
+
+    /** Revogação da finalidade "conta acadêmica" bloqueia imediatamente o acesso (LGPD). */
+    @Builder.Default
+    @Column(name = "consent_revoked", nullable = false)
+    private boolean consentRevoked = false;
+
+    @Column(name = "deleted_at")
+    private Instant deletedAt;
 
     // --- Auditoria Temporal ---
     @Builder.Default
@@ -225,6 +235,22 @@ public class User {
 
     public void setConsentIp(String consentIp) {
         this.consentIp = consentIp;
+    }
+
+    public boolean isConsentRevoked() {
+        return consentRevoked;
+    }
+
+    public void setConsentRevoked(boolean consentRevoked) {
+        this.consentRevoked = consentRevoked;
+    }
+
+    public Instant getDeletedAt() {
+        return deletedAt;
+    }
+
+    public void setDeletedAt(Instant deletedAt) {
+        this.deletedAt = deletedAt;
     }
 
     public Instant getCreatedAt() {

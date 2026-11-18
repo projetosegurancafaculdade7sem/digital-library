@@ -27,6 +27,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
  * {@code encode()} e embutido na string PHC; o campo {@code passwordSalt} do
  * usuário armazena o mesmo salt de forma explícita (req. 1.3 / 1.4).</p>
  */
+
+
 @Configuration
 public class SecurityBeansConfig {
 

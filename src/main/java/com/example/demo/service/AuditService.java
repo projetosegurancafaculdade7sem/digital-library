@@ -2,82 +2,120 @@ package com.example.demo.service;
 
 import com.example.demo.model.SecurityAuditLog;
 import com.example.demo.repository.SecurityAuditLogRepository;
-import jakarta.transaction.Transactional;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 
+/**
+ * Cadeia de integridade HMAC-SHA256 (item 5 do parecer).
+ *
+ * <p>Um SHA-256 simples pode ser recalculado por quem tem acesso de escrita ao banco.
+ * Aqui o HMAC usa uma chave separada, fornecida por variável de ambiente/cofre, e um número
+ * de sequência monotônico. A gravação é serializada por um lock justo e executada dentro de
+ * sua própria transação, evitando gaps e previousHash duplicados sob concorrência.</p>
+ */
 @Service
-@RequiredArgsConstructor
 public class AuditService {
 
+    public static final String GENESIS_HASH = "0000000000000000000000000000000000000000000000000000000000000000";
+    private static final String HMAC_ALGORITHM = "HmacSHA256";
+
     private final SecurityAuditLogRepository auditLogRepository;
-    private static final String GENESIS_HASH = "0000000000000000000000000000000000000000000000000000000000000000";
+    private final TransactionTemplate transactionTemplate;
+    private final byte[] hmacKey;
+    /** Serializa a atribuição de sequência em instância única (ver docs/SEGURANCA.md). */
+    private final ReentrantLock writeLock = new ReentrantLock(true);
 
-    @Transactional
+    public AuditService(SecurityAuditLogRepository auditLogRepository,
+                        PlatformTransactionManager transactionManager,
+                        @Value("${security.audit.hmac-key-base64}") String hmacKeyBase64) {
+        this.auditLogRepository = auditLogRepository;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.hmacKey = Base64.getDecoder().decode(hmacKeyBase64);
+        if (this.hmacKey.length < 32) {
+            throw new IllegalStateException("security.audit.hmac-key-base64 deve ter ao menos 32 bytes.");
+        }
+    }
+
     public void logEvent(UUID userId, String eventType, String ipAddress, String userAgent) {
-        Instant now = Instant.now();
+        writeLock.lock();
+        try {
+            // timestamp(6) no banco: truncar antes de calcular o HMAC evita divergencia
+            // entre o valor em memoria e o valor efetivamente persistido.
+            Instant timestamp = Instant.now().truncatedTo(ChronoUnit.MICROS);
+            transactionTemplate.executeWithoutResult(status -> persistEvent(
+                    userId, eventType, ipAddress, userAgent, timestamp));
+        } finally {
+            writeLock.unlock();
+        }
+    }
 
-        String previousHash = auditLogRepository.findTopByOrderByTimestampDesc()
-                .map(SecurityAuditLog::getLogHash)
-                .orElse(GENESIS_HASH);
-
-        String currentHash = calculateHash(userId, eventType, ipAddress, userAgent, now, previousHash);
+    private void persistEvent(UUID userId, String eventType, String ipAddress,
+                              String userAgent, Instant timestamp) {
+        SecurityAuditLog previous = auditLogRepository.findTopByOrderBySequenceNoDesc().orElse(null);
+        long sequence = previous == null ? 1L : previous.getSequenceNo() + 1;
+        String previousHash = previous == null ? GENESIS_HASH : previous.getLogHash();
+        String hash = calculateHmac(userId, eventType, ipAddress, userAgent,
+                timestamp, previousHash, sequence);
 
         SecurityAuditLog log = SecurityAuditLog.builder()
+                .sequenceNo(sequence)
                 .userId(userId)
                 .eventType(eventType)
                 .ipAddress(ipAddress != null ? ipAddress : "unknown")
                 .userAgent(userAgent)
-                .timestamp(now)
+                .timestamp(timestamp)
                 .previousHash(previousHash)
-                .logHash(currentHash)
+                .hmacHash(hash)
+                .logHash(hash) // compatibilidade com o campo historicamente exibido no painel
                 .build();
 
-        auditLogRepository.save(log);
+        auditLogRepository.saveAndFlush(log);
     }
 
-    /**
-     * Verifica a cadeia de integridade SHA-256 (req. 5.3).
-     */
+    /** Verifica sequência, ponteiro anterior e HMAC de cada registro. */
     public boolean verifyIntegrityChain() {
-        List<SecurityAuditLog> logs = auditLogRepository.findAllByOrderByTimestampAsc();
+        List<SecurityAuditLog> logs = auditLogRepository.findAllByOrderBySequenceNoAsc();
         String expectedPrevious = GENESIS_HASH;
+        long expectedSequence = 1L;
         for (SecurityAuditLog log : logs) {
-            if (!expectedPrevious.equals(log.getPreviousHash())) {
+            if (log.getSequenceNo() == null || log.getSequenceNo() != expectedSequence
+                    || log.getPreviousHash() == null
+                    || !constantEquals(expectedPrevious, log.getPreviousHash())) {
                 return false;
             }
-            String recalculated = calculateHash(
-                    log.getUserId(),
-                    log.getEventType(),
-                    log.getIpAddress(),
-                    log.getUserAgent(),
-                    log.getTimestamp(),
-                    log.getPreviousHash()
-            );
-            if (!recalculated.equals(log.getLogHash())) {
+            String recalculated = calculateHmac(
+                    log.getUserId(), log.getEventType(), log.getIpAddress(), log.getUserAgent(),
+                    log.getTimestamp(), log.getPreviousHash(), log.getSequenceNo());
+            if (!constantEquals(recalculated, log.getHmacHash())
+                    || !constantEquals(recalculated, log.getLogHash())) {
                 return false;
             }
-            expectedPrevious = log.getLogHash();
+            expectedPrevious = log.getHmacHash();
+            expectedSequence++;
         }
         return true;
     }
 
-    /**
-     * Exemplo de análise de logs para evidência (req. 5.4).
-     */
+    /** Análise para evidência no painel administrativo (req. 5.4). */
     public Map<String, Object> analyzeLogs() {
-        List<SecurityAuditLog> logs = auditLogRepository.findAllByOrderByTimestampAsc();
+        List<SecurityAuditLog> logs = auditLogRepository.findAllByOrderBySequenceNoAsc();
 
         Map<String, Long> byEvent = logs.stream()
                 .collect(Collectors.groupingBy(SecurityAuditLog::getEventType, Collectors.counting()));
@@ -86,7 +124,6 @@ public class AuditService {
                 .filter(e -> e.getKey().contains("FAIL") || e.getKey().contains("LOCKED"))
                 .mapToLong(Map.Entry::getValue)
                 .sum();
-
         long successes = byEvent.entrySet().stream()
                 .filter(e -> e.getKey().contains("SUCCESS"))
                 .mapToLong(Map.Entry::getValue)
@@ -96,13 +133,10 @@ public class AuditService {
         int from = Math.max(0, logs.size() - 10);
         for (int i = from; i < logs.size(); i++) {
             SecurityAuditLog l = logs.get(i);
-            recent.add(String.format("%s | %s | user=%s | ip=%s | hash=%s...",
-                    l.getTimestamp(),
-                    l.getEventType(),
-                    l.getUserId(),
-                    l.getIpAddress(),
-                    l.getLogHash() != null && l.getLogHash().length() > 12
-                            ? l.getLogHash().substring(0, 12) : l.getLogHash()));
+            recent.add(String.format("%s | seq=%s | %s | user=%s | ip=%s | hmac=%s...",
+                    l.getTimestamp(), l.getSequenceNo(), l.getEventType(), l.getUserId(),
+                    l.getIpAddress(), l.getHmacHash() != null && l.getHmacHash().length() > 12
+                            ? l.getHmacHash().substring(0, 12) : l.getHmacHash()));
         }
 
         Map<String, Object> analysis = new LinkedHashMap<>();
@@ -111,17 +145,21 @@ public class AuditService {
         analysis.put("failureOrLockEvents", failures);
         analysis.put("eventsByType", byEvent);
         analysis.put("integrityChainValid", verifyIntegrityChain());
+        analysis.put("hashAlgorithm", HMAC_ALGORITHM);
+        analysis.put("lastSequence", logs.isEmpty() ? 0L : logs.get(logs.size() - 1).getSequenceNo());
         analysis.put("recentEventsSample", recent);
         analysis.put("analysisNote",
-                "Contagem de eventos de autenticação/LGPD com verificação da cadeia hash. "
+                "Cadeia HMAC-SHA256 com sequência monotônica e chave fora do banco. "
                         + "Picos em LOGIN_FAILED_* ou ACCOUNT_LOCKED_* indicam possível força bruta.");
         return analysis;
     }
 
-    private String calculateHash(UUID userId, String eventType, String ipAddress,
-                                 String userAgent, Instant timestamp, String previousHash) {
+    private String calculateHmac(UUID userId, String eventType, String ipAddress,
+                                 String userAgent, Instant timestamp,
+                                 String previousHash, long sequence) {
         try {
-            String rawData = String.format("%s|%s|%s|%s|%s|%s",
+            String rawData = String.format("%d|%s|%s|%s|%s|%s|%s",
+                    sequence,
                     userId != null ? userId.toString() : "ANONYMOUS",
                     eventType,
                     ipAddress,
@@ -129,20 +167,28 @@ public class AuditService {
                     timestamp.toString(),
                     previousHash);
 
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hashBytes = digest.digest(rawData.getBytes(StandardCharsets.UTF_8));
-
-            StringBuilder hexString = new StringBuilder();
-            for (byte b : hashBytes) {
-                String hex = Integer.toHexString(0xff & b);
-                if (hex.length() == 1) {
-                    hexString.append('0');
-                }
-                hexString.append(hex);
-            }
-            return hexString.toString();
-        } catch (NoSuchAlgorithmException e) {
-            throw new RuntimeException("error calculating audit hash", e);
+            Mac mac = Mac.getInstance(HMAC_ALGORITHM);
+            mac.init(new SecretKeySpec(hmacKey, HMAC_ALGORITHM));
+            byte[] digest = mac.doFinal(rawData.getBytes(StandardCharsets.UTF_8));
+            return hex(digest);
+        } catch (Exception e) {
+            throw new IllegalStateException("Erro ao calcular HMAC de auditoria", e);
         }
+    }
+
+    private boolean constantEquals(String expected, String actual) {
+        if (expected == null || actual == null) {
+            return false;
+        }
+        return MessageDigest.isEqual(expected.getBytes(StandardCharsets.UTF_8),
+                actual.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private String hex(byte[] bytes) {
+        StringBuilder sb = new StringBuilder(bytes.length * 2);
+        for (byte b : bytes) {
+            sb.append(String.format("%02x", b));
+        }
+        return sb.toString();
     }
 }

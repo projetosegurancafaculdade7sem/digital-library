@@ -52,9 +52,11 @@ public class LgpdController {
 
     @GetMapping("/export")
     @ResponseBody
-    public ResponseEntity<Map<String, Object>> export(Authentication authentication) {
+    public ResponseEntity<Map<String, Object>> export(Authentication authentication,
+                                                      HttpServletRequest request) {
         User user = currentUser(authentication);
-        Map<String, Object> export = lgpdService.exportPersonalData(user.getId());
+        Map<String, Object> export = lgpdService.exportPersonalData(
+                user.getId(), request.getRemoteAddr(), request.getHeader("User-Agent"));
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"meus-dados.json\"")
                 .contentType(MediaType.APPLICATION_JSON)

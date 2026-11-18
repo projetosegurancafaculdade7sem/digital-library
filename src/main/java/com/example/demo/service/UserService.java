@@ -30,7 +30,7 @@ public class UserService {
 
     /**
      * Resultado do cadastro com o segredo TOTP em claro somente para exibir o QR
-     * (não usar o valor eventualmente alterado pelo ciclo JPA/criptografia).
+     *
      */
     public record RegistrationResult(User user, String totpSecretPlaintext) {}
 

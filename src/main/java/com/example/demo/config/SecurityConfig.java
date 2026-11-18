@@ -1,9 +1,11 @@
 package com.example.demo.config;
 
+import com.example.demo.model.User;
 import com.example.demo.repository.UserRepository;
 import com.example.demo.security.LoginAuthenticationFailureHandler;
 import com.example.demo.security.LoginAuthenticationSuccessHandler;
 import com.example.demo.security.RateLimitingFilter;
+import com.example.demo.security.TwoFactorEnforcementFilter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -14,52 +16,41 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.access.intercept.AuthorizationFilter;
 
 import java.time.Instant;
+import java.util.Arrays;
+import java.util.Locale;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
- * Fluxo de autenticação (req. 1.7) — documentação formal:
- *
- * <pre>
- * 1. Cliente acessa /login (HTTPS — req. 3.1/3.2).
- * 2. POST /perform_login → Spring Security formLogin valida e-mail/senha (Argon2).
- * 3. RateLimitingFilter limita tentativas por IP nas rotas críticas (req. 1.11).
- * 4. Em falha: LoginAuthenticationFailureHandler incrementa tentativas e pode
- *    bloquear a conta por 15 min após 5 falhas (AuthService — req. 1.11).
- * 5. Em sucesso: LoginAuthenticationSuccessHandler registra LOGIN_PRIMARY_SUCCESS
- *    e redireciona para /login-2fa (req. 1.5/1.6).
- * 6. /login-2fa valida código TOTP (TwoFactorService) e só então define
- *    2FA_VERIFIED na sessão; dashboard exige esse atributo.
- * 7. Logout em /logout invalida a sessão e remove JSESSIONID (req. 1.10).
- * 8. Sessão: IF_REQUIRED, máximo 1 sessão por usuário, timeout configurado
- *    em server.servlet.session.timeout (padrão 15m — req. 1.9).
- * </pre>
- *
- * Justificativa dos parâmetros de sessão (req. 1.9 / 1.12):
- * timeout curto reduz janela de sequestro de sessão; maximumSessions(1) mitiga
- * reutilização simultânea de credenciais.
+ * Cadeia de filtros HTTP. O segundo fator e exigido pelo {@link TwoFactorEnforcementFilter}
+ * (item 1 do parecer) e o painel de auditoria exige ROLE_ADMIN explicito (item 5).
  */
 @Configuration
 @EnableWebSecurity
 public class SecurityConfig {
 
     private final RateLimitingFilter rateLimitingFilter;
+    private final TwoFactorEnforcementFilter twoFactorEnforcementFilter;
     private final UserRepository userRepository;
     private final LoginAuthenticationSuccessHandler successHandler;
     private final LoginAuthenticationFailureHandler failureHandler;
 
-    @Value("${server.servlet.session.timeout:15m}")
-    private String sessionTimeout;
+    @Value("${security.admin.emails:}")
+    private String adminEmails;
 
     @Value("${server.ssl.enabled:false}")
     private boolean sslEnabled;
 
     public SecurityConfig(RateLimitingFilter rateLimitingFilter,
+                          TwoFactorEnforcementFilter twoFactorEnforcementFilter,
                           UserRepository userRepository,
                           LoginAuthenticationSuccessHandler successHandler,
                           LoginAuthenticationFailureHandler failureHandler) {
         this.rateLimitingFilter = rateLimitingFilter;
+        this.twoFactorEnforcementFilter = twoFactorEnforcementFilter;
         this.userRepository = userRepository;
         this.successHandler = successHandler;
         this.failureHandler = failureHandler;
@@ -67,46 +58,41 @@ public class SecurityConfig {
 
     @Bean
     public UserDetailsService userDetailsService() {
+        Set<String> admins = Arrays.stream(adminEmails.split(","))
+                .map(String::trim)
+                .map(email -> email.toLowerCase(Locale.ROOT))
+                .filter(email -> !email.isEmpty())
+                .collect(Collectors.toSet());
+
         return username -> userRepository.findByEmail(username)
                 .map(user -> {
-                    if (!user.isAccountNonLocked()
-                            && user.getLockedUntil() != null
-                            && Instant.now().isAfter(user.getLockedUntil())) {
-                        user.setAccountNonLocked(true);
-                        user.setFailedLoginAttempts(0);
-                        user.setLockedUntil(null);
-                        userRepository.save(user);
-                    }
+                    unlockIfExpired(user);
+                    String role = normalizeRole(user, admins);
                     return org.springframework.security.core.userdetails.User.builder()
                             .username(user.getEmail())
                             .password(user.getPasswordHash())
-                            .roles("USER")
+                            .roles(role)
                             .accountLocked(!user.isAccountNonLocked())
+                            .disabled(user.isConsentRevoked())
                             .build();
                 })
-                .orElseThrow(() -> new UsernameNotFoundException("Usuário não encontrado: " + username));
+                .orElseThrow(() -> new UsernameNotFoundException("Usuário não encontrado"));
     }
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
-                .addFilterBefore(rateLimitingFilter, UsernamePasswordAuthenticationFilter.class)
+                .addFilterBefore(rateLimitingFilter,
+                        org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class)
+                // Executado antes da autorizacao: bloqueia bypass de 2FA mesmo em rotas ADMIN.
+                .addFilterBefore(twoFactorEnforcementFilter, AuthorizationFilter.class)
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(
-                                "/css/**",
-                                "/js/**",
-                                "/images/**",
-                                "/webjars/**",
-                                "/favicon.ico",
-                                "/login",
-                                "/register",
-                                "/forgot-password",
-                                "/reset-password",
-                                "/error"
+                                "/", "/css/**", "/js/**", "/images/**", "/webjars/**", "/favicon.ico",
+                                "/login", "/register", "/forgot-password", "/reset-password", "/error"
                         ).permitAll()
                         .requestMatchers("/login-2fa").authenticated()
-                        .requestMatchers("/privacy/**").authenticated()
-                        .requestMatchers("/admin/audit/**").authenticated()
+                        .requestMatchers("/admin/audit/**").hasRole("ADMIN")
                         .anyRequest().authenticated()
                 )
                 .formLogin(form -> form
@@ -124,18 +110,46 @@ public class SecurityConfig {
                         .permitAll()
                 )
                 .sessionManagement(session -> session
-                        // Timeout efetivo: server.servlet.session.timeout=${sessionTimeout}
                         .sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED)
+                        .sessionFixation().migrateSession()
                         .maximumSessions(1)
                         .expiredUrl("/login?expired=true")
+                )
+                .headers(headers -> headers
+                        .frameOptions(frame -> frame.deny())
+                        .contentSecurityPolicy(csp -> csp.policyDirectives(
+                                "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+                                        + "img-src 'self' data:; object-src 'none'; frame-ancestors 'none'"))
+                        .httpStrictTransportSecurity(hsts -> hsts
+                                .includeSubDomains(true)
+                                .maxAgeInSeconds(31_536_000L))
                 );
 
         if (sslEnabled) {
-            // Spring Security 7: requiresChannel foi removido (ChannelDecisionManager).
-            // redirectToHttps + SSL no Tomcat atendem req. 3.1 / 3.2.
             http.redirectToHttps(Customizer.withDefaults());
         }
 
         return http.build();
+    }
+
+    private void unlockIfExpired(User user) {
+        if (!user.isAccountNonLocked()
+                && user.getLockedUntil() != null
+                && Instant.now().isAfter(user.getLockedUntil())) {
+            user.setAccountNonLocked(true);
+            user.setFailedLoginAttempts(0);
+            user.setLockedUntil(null);
+            userRepository.save(user);
+        }
+    }
+
+    private String normalizeRole(User user, Set<String> admins) {
+        String email = user.getEmail() == null ? "" : user.getEmail().toLowerCase(Locale.ROOT);
+        if (admins.contains(email)) {
+            return "ADMIN";
+        }
+        String role = user.getRole() == null ? "" : user.getRole();
+        String normalized = role.startsWith("ROLE_") ? role.substring(5) : role;
+        return normalized.isBlank() ? "USER" : normalized;
     }
 }

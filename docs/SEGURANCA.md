@@ -1,104 +1,131 @@
 # Documentação de Segurança — Digital Library
-# Atende requisitos 1.2, 1.7, 1.9, 1.12, 3.1–3.8, 4.11, 5.3–5.4
 
-## 1. Fluxo de autenticação (req. 1.7)
+Este documento descreve o estado **implementado no código**, em conformidade com o parecer conclusivo.
+Os controles abaixo são verificados por testes automatizados, pela validação de inicialização e pelos
+comandos reproduzíveis em [`TESTES.md`](TESTES.md).
 
-```
+## 1. Visão geral dos controles
+
+| Frente do parecer | Controle implementado | Evidência |
+|---|---|---|
+| Autenticação e 2FA | Segundo fator exigido por filtro central antes da autorização | `TwoFactorEnforcementFilter`, `AuthenticationEnforcementTest` |
+| Recuperação de senha | Token HMAC, 15 min, uso único atômico, política, anti-enumeração | `PasswordResetService`, `PasswordResetServiceTest` |
+| Criptografia/TLS | TLS obrigatório via ENV, AES-256-GCM e HMAC-SHA256 com chaves separadas | `StartupSecurityValidator`, `AttributeEncryptor`, `TokenHasher` |
+| LGPD | Inventário, consentimento, exportação, revogação e exclusão em cascata | `LgpdService`, `LgpdServiceTest`, [`LGPD.md`](LGPD.md) |
+| Auditoria | Cadeia HMAC-SHA256 com sequência monotônica, imutabilidade e RBAC | `AuditService`, `AuditIntegrityTest`, [`sql/audit-hardening.sql`](sql/audit-hardening.sql) |
+| Documentação/testes | Documentos alinhados ao código e comandos reproduzíveis | [`TESTES.md`](TESTES.md) |
+| Correção científica | Argon2id descrito como KDF, não como criptografia; Supabase = PostgreSQL gerenciado | [`RESUMO_CIENTIFICO.md`](RESUMO_CIENTIFICO.md) |
+
+## 2. Autenticação, autorização e 2FA
+
+### Fluxo
+
+```text
 [HTTPS] Cliente
-   │
-   ▼
-GET /login
-   │
-   ▼
-POST /perform_login  ← RateLimitingFilter (10 req/min/IP)
-   │
-   ├─ falha → LoginAuthenticationFailureHandler
-   │            └─ AuthService.registerFailedPasswordAttempt
-   │                 (após 5 falhas: bloqueio 15 min + log ACCOUNT_LOCKED_*)
-   │
-   └─ sucesso → LoginAuthenticationSuccessHandler
-                  ├─ log LOGIN_PRIMARY_SUCCESS
-                  └─ redirect /login-2fa
-                       │
-                       ▼
-                 POST /login-2fa (código TOTP do autenticador)
-                       │
-                       ├─ inválido → AuthService.registerFailed2FAAttempt + log LOGIN_FAILED_2FA
-                       └─ válido → sessão 2FA_VERIFIED=true + log LOGIN_SUCCESS_2FA
-                                    └─ /dashboard
+   |
+   v
+POST /perform_login  <-- RateLimitingFilter (10 req/min/IP)
+   |
+   +-- falha -> LOGIN_FAILED_PASSWORD / ACCOUNT_LOCKED_* (bloqueio de 15 min após 5 falhas)
+   |
+   +-- sucesso -> LOGIN_PRIMARY_SUCCESS -> /login-2fa
+                         |
+                         v
+                  POST /login-2fa (TOTP RFC 6238)
+                         |
+                         +-- inválido -> LOGIN_FAILED_2FA
+                         +-- válido   -> LOGIN_SUCCESS_2FA, atributo 2FA_VERIFIED na sessão
 ```
 
-Logout (`POST /logout`): invalida sessão HTTP e remove cookie `JSESSIONID` (req. 1.10).
+- `TwoFactorEnforcementFilter` é registrado **antes de `AuthorizationFilter`**, portanto uma rota
+  administrativa não é acessível apenas com o primeiro fator.
+- Rotas sensíveis (dashboard, perfil, privacidade, administração, favoritos, empréstimos e API)
+  exigem `2FA_VERIFIED=true`. `/login-2fa` é a única rota autenticada que permite o trânsito sem
+  o segundo fator.
+- A revogação do consentimento (`consentRevoked=true`) desabilita a conta no `UserDetailsService`
+  e o filtro invalida a sessão imediatamente.
+- `sessionFixation().migrateSession()` troca o identificador de sessão no login.
+- `POST /logout` invalida a sessão e remove `JSESSIONID`.
 
-Implementação canônica de TOTP: `TwoFactorService` (TotpManager é apenas fachada).
+### Autorização administrativa
 
-## 2. Hash de senha Argon2id (req. 1.1 / 1.2 / 1.3 / 1.4 / 1.12)
+- `User.role` é normalizado (`ROLE_ADMIN` → `ADMIN`); e-mails em `SECURITY_ADMIN_EMAILS` também
+  recebem `ROLE_ADMIN`.
+- O painel `/admin/audit/**` usa `hasRole("ADMIN")`. Usuários comuns recebem `403`, mesmo com 2FA válido.
 
-| Parâmetro   | Valor  | Justificativa |
-|------------|--------|---------------|
-| saltLength | 16     | 128 bits de entropia; unicidade por senha (OWASP / RFC 9106) |
-| hashLength | 32     | 256 bits de digest armazenado |
-| parallelism| 1      | Adequado a host acadêmico single-node |
-| memory     | 65536  | 64 MiB — eleva custo em GPU/ASIC |
-| iterations | 3      | Passes recomendados com ~64 MiB (Argon2id) |
+## 3. Hash de senha e política
 
-O `Argon2PasswordEncoder` gera salt interno a cada `encode()` e o embute na string PHC.
-`PasswordHashingSupport` extrai esse salt e grava em `User.passwordSalt`, atendendo ao
-armazenamento explícito hash + salt sem reinventar o KDF.
+`Argon2PasswordEncoder` (OWASP/RFC 9106) com parâmetros configuráveis:
 
-## 3. Sessões (req. 1.9)
+| Parâmetro | Valor |
+|---|---|
+| saltLength | 16 bytes |
+| hashLength | 32 bytes |
+| parallelism | 1 |
+| memory | 65536 KiB |
+| iterations | 3 |
 
-- `SessionCreationPolicy.IF_REQUIRED`
-- `maximumSessions(1)`
-- `server.servlet.session.timeout=15m` (expiração por inatividade)
+`PasswordHashingSupport` extrai o salt embutido na string PHC e o persiste em `User.passwordSalt`.
+Argon2id é uma **função de derivação de chave de senha**, não um algoritmo de criptografia e não
+produz a chave AES. A política `PasswordPolicy` exige mínimo de 12 caracteres, maiúscula, minúscula,
+dígito, símbolo, rejeita senhas comuns e impede a reutilização da senha atual.
 
-## 4. Comunicação TLS/HTTPS (req. 3.1 / 3.2 / 3.3)
+## 4. Recuperação de senha
 
-- Keystore PKCS12 (`classpath:keystore.p12`), porta 8443
-- Conector HTTP 8080 redireciona para HTTPS
-- `http.redirectToHttps(Customizer.withDefaults())` quando SSL está habilitado (API do Spring Security 7; substitui `requiresChannel`)
-- Evidência: acessar `https://localhost:8443` e inspecionar certificado / DevTools (cadeado)
+1. `POST /forgot-password` aceita qualquer e-mail e sempre responde da mesma forma. Para e-mails
+   inexistentes, `TokenHasher.dummyHash()` executa o mesmo custo de HMAC, evitando enumeração por timing.
+2. O token tem 256 bits, é enviado em claro apenas por e-mail e é gravado como **HMAC-SHA256** em
+   `PasswordResetToken.tokenHash` (domínio separado da chave de auditoria).
+3. Validade de 15 minutos; um novo pedido revoga os anteriores.
+4. `resetPassword()` valida a política, bloqueia a linha com `findByTokenHashForUpdate` e executa
+   `consumeIfUnused`; apenas uma requisição concorrente consume o token.
+5. Eventos de auditoria são registrados com `userId=null`, de modo que o log não associe o pedido
+   ao titular.
 
-SMTP Mailtrap com STARTTLS protege o e-mail, mas **não** substitui HTTPS da aplicação.
+## 5. TLS, comunicação e dados em repouso
 
-## 5. Criptografia em repouso (req. 3.4–3.8)
+- `server.port=8443`, `server.ssl.enabled=true`, keystore PKCS12 informado por `SERVER_SSL_KEY_STORE`.
+- Nenhum keystore, certificado, senha ou chave é versionado. `StartupSecurityValidator` falha o boot
+  se TLS estiver desligado, se o keystore não existir, se a senha for fraca, se a URL de reset não
+  usar HTTPS ou se a conexão PostgreSQL não exigir `sslmode=require`.
+- Redirecionamento HTTP → HTTPS, HSTS com `max-age=31536000; includeSubDomains`, CSP restritiva,
+  `frame-options: deny`, cookies `Secure`, `HttpOnly` e `SameSite=Lax`.
+- `AttributeEncryptor`: AES-256-GCM com IV aleatório de 12 bytes para `User.twoFactorSecret`.
+- `TokenHasher`: HMAC-SHA256 para tokens de reset. `AuditService`: HMAC-SHA256 para a cadeia de log.
+- Chaves AES e HMAC são obrigatoriamente distintas e fornecidas por variáveis de ambiente/cofre.
+- A validação do ambiente publicado deve ser executada com `scripts/verify-tls.sh` e registrada em
+  [`TESTES.md`](TESTES.md). Certificados expirados ou cadeias incompletas invalidam a evidência.
 
-- Classe: `AttributeEncryptor`
-- Algoritmo: **AES-256-GCM** (AEAD) — confidencialidade + tag de autenticação
-- IV: 12 bytes aleatórios (NIST SP 800-38D) por valor
-- Campo protegido: `User.twoFactorSecret` (`@Convert`)
-- Chave: 32 bytes em Base64 via `security.encryption.key-base64` / env `SECURITY_ENCRYPTION_KEY_BASE64`
-  (não hardcoded no código-fonte)
+## 6. Auditoria
 
-## 6. Proteção contra força bruta (req. 1.11)
+- `SecurityAuditLog` possui `sequenceNo` monotônico, `previousHash`, `hmacHash` e `logHash`
+  (compatibilidade com painéis antigos).
+- O HMAC cobre: sequência, usuário (ou `ANONYMOUS`), tipo de evento, IP, User-Agent, timestamp
+  truncado a microssegundos e hash anterior. A comparação é feita em tempo constante.
+- A escrita é serializada por um lock justo e pelo `SELECT ... FOR UPDATE` do último evento, evitando
+  lacunas e ponteiros duplicados sob concorrência.
+- `@PreUpdate`/`@PreRemove` bloqueiam alterações e exclusões via JPA. A migração
+  [`docs/sql/audit-hardening.sql`](sql/audit-hardening.sql) aplica restrição equivalente no banco,
+  unique index de sequência e trigger de verificação de sequência.
+- `GET /admin/audit/analyze` e `.json` exigem `ROLE_ADMIN` e exibem `integrityChainValid`,
+  `lastSequence`, contagens e amostra recente.
+- Para carga crítica, publique o último `sequenceNo`/`hmacHash` emâncora externa (objeto com
+  retenção legal ou registro assinado), conforme procedimento em
+  [`ROTACAO_SEGREDOS.md`](ROTACAO_SEGREDOS.md).
 
-1. `RateLimitingFilter` (Bucket4j): 10 req/min nas rotas `/perform_login`, `/login`, `/login-2fa`,
-   `/register`, `/forgot-password`, `/reset-password`
-2. Bloqueio de conta após 5 falhas (senha ou 2FA), por 15 minutos — integrado ao `formLogin`
+## 7. Segredos e histórico
 
-## 7. Fluxo LGPD — direitos do titular (req. 4.4 / 4.6–4.11)
+Credenciais antigas de Mailtrap/Supabase/AES aparecem no histórico Git. Elas **não** estão mais nos
+arquivos atuais, mas precisam ser rotacionadas no provedor e o histórico precisa ser reescrito.
+Veja [`ROTACAO_SEGREDOS.md`](ROTACAO_SEGREDOS.md). O workflow de CI não usa mais `continue-on-error`
+para TruffleHog, Trivy ou Semgrep.
 
-| Direito | Endpoint | Descrição |
-|---------|----------|-----------|
-| Consentimento no cadastro | `POST /register` + `acceptTerms` | Grava `UserConsent` (versão + finalidade) |
-| Consulta | `GET /privacy/my-data` | Dados pessoais do titular |
-| Exportação | `GET /privacy/export` | JSON download |
-| Histórico | `GET /privacy/consents` | Consentimentos ordenados por data |
-| Revogação | `POST /privacy/consent/revoke` | `granted=false` + auditoria |
-| Exclusão | `POST /privacy/delete` | Anonimização + log |
-
-Eventos auditados: `LGPD_CONSENT_GRANTED_*`, `LGPD_CONSENT_REVOKED_*`, `LGPD_DATA_EXPORT`, `LGPD_DATA_DELETED`.
-
-## 8. Auditoria (req. 5.1–5.4)
-
-- Cadeia hash SHA-256 (`previousHash` → `logHash`), campos imutáveis (`updatable=false`)
-- Logs de autenticação: `LOGIN_PRIMARY_SUCCESS`, `LOGIN_SUCCESS_2FA`, `LOGIN_FAILED_*`, `ACCOUNT_LOCKED_*`
-- Análise: `GET /admin/audit/analyze` (e `.json`) — contagens, amostra recente e `integrityChainValid`
-
-## 9. Referências técnicas
+## 8. Referências
 
 - RFC 9106 — Argon2
 - OWASP Password Storage Cheat Sheet
-- NIST SP 800-38D — GCM
+- NIST SP 800-38D — AES-GCM
 - RFC 6238 — TOTP
-- Lei nº 13.709/2018 (LGPD)
+- RFC 2246/8446 — TLS
+- Lei nº 13.709/2018 — LGPD
+- Lei nº 12.965/2014 — Marco Civil da Internet

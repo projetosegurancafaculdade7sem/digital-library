@@ -1,0 +1,36 @@
+name: Verificação TLS do ambiente publicado
+
+on:
+  workflow_dispatch:
+    inputs:
+      host:
+        description: 'Host publicado (ex.: library.example.com)'
+        required: true
+        type: string
+      port:
+        description: 'Porta TLS'
+        required: true
+        default: '8443'
+        type: string
+
+jobs:
+  verify-tls:
+    name: openssl s_client + curl + HSTS
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout do codigo
+        uses: actions/checkout@v4
+
+      - name: Validar TLS, certificado e HSTS
+        shell: bash
+        run: |
+          mkdir -p evidence
+          bash scripts/verify-tls.sh "${{ inputs.host }}" "${{ inputs.port }}" | tee evidence/tls-check.txt
+
+      - name: Enviar evidencias TLS
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tls-evidence
+          path: evidence/
+          if-no-files-found: warn

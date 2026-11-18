@@ -1,105 +1,109 @@
-# digital-library
-O projeto pensado é uma plataforma de estudos e organização digital, onde os usuarios poderão procurar por livros digitais de seu interesse para estudos e pesquisa academica, o projeto não visa armazenar livros de direitos autorais externos, a ideia é fazer a pesquisa em APIs públicas e redirecionar o estudante para o site de origem.
+# Digital Library
 
+Plataforma acadêmica para busca e organização de livros digitais. A aplicação consulta APIs públicas
+(Google Books/Open Library) e redireciona o estudante para a fonte oficial; não hospeda obras com
+direitos autorais de terceiros.
 
 ## Stack
 
-* **Linguagem:** Java
-* **Framework:** Spring Boot
-* **API:** Spring Boot Framework
-* **Banco de dados:** supasabe ( cloud )
-* **Versionamento:** Git e GitHub
+- **Linguagem:** Java 21+
+- **Framework:** Spring Boot (MVC + Thymeleaf)
+- **Banco de dados:** PostgreSQL gerenciado pelo Supabase (o Supabase é o provedor do serviço, não um motor diferente)
+- **Segurança:** Spring Security, Argon2id, TOTP, AES-256-GCM, HMAC-SHA256, TLS
+- **Testes:** JUnit 5, Spring Boot Test, H2 em memória
+- **DevSecOps:** Trivy, Semgrep, TruffleHog, Bearer, OWASP ZAP
 
 ## Arquitetura
 
-O projeto utilizará uma **Arquitetura em MVC**, buscando dividir o sistema em partes menores, onde cada uma tem uma única responsabilidade, facilitando a manutenção e os testes.
-
-A estrutura será organizada principalmente em:
-
 ```text
-Interface
+Browser (HTTPS)
     ↓
-Controllers
+Controllers (Thymeleaf/REST)
     ↓
-Services
+Services (regras de negócio, LGPD, auditoria, 2FA)
     ↓
-   DTO
+Repositories (Spring Data JPA)
     ↓
-Repositories / Integrações
-    ↓
-Supabase / APIs externas
+PostgreSQL no Supabase  ←→  APIs públicas de livros
 ```
 
-### Controllers
-
-Responsáveis por receber as requisições e encaminhá-las para as regras de negócio.
-
-### Services
-
-Aqui ficarão as regras de negócio da aplicação, como busca, filtros, favoritos e gerenciamento dos materiais.
-
-### Repositories
-
-Responsáveis pelo acesso e persistência dos dados no banco de dados.
-
-### Integrações
-
-Camada responsável pela comunicação com APIs externas, como por exemplo Google Books e Open Library, mantendo essa lógica separada do restante da aplicação.
-
-Essa estrutura permite que diversas fontes de livros sejam utilizadas sem que as regras de negócio dependam diretamente de uma API específica.
-
-## MVP 1
-
-A primeira versão terá como foco:
-
-* Cadastro e login de usuários (envolvendo os principais requisitos de autenticação e autorização)
-* Busca de livros e materiais;
-* Visualização das informações dos materiais;
-* Acesso à fonte oficial do conteúdo;
-
-
-Estrutura do projeto
+Estrutura real do código:
 
 ```text
-src/
-├── apps/
-│   ├── accounts/
-│   ├── library/
-│   ├── favorites/
-│   ├── history/
-│   └── reviews/
-│
-├── services/
-│   ├── book_service.java
-│   ├── favorite_service.java
-│   └── review_service.java
-│
-├── repositories/
-│   ├── book_repository.java
-│   └── favorite_repository.java
-│
-├── integrations/
-│   ├── google_books/
-│   │   └── client.java
-│   │
-│   └── open_library/
-│       └── client.java
-│
-├── config/
-│
-└── manage.java
+src/main/java/com/example/demo/
+├── config/         # SecurityConfig, StartupSecurityValidator, TLS
+├── controller/     # autenticação, perfil, privacidade, administração
+├── dto/            # objetos de transporte
+├── integration/    # clientes das APIs externas
+├── model/          # entidades JPA
+├── repository/     # interfaces Spring Data
+├── security/       # filtros, TOTP, política de senha, HMAC
+└── service/        # regras de negócio
 ```
 
-A pasta `docs/` contém os documentos de requisitos, escopo e arquitetura do projeto.
+## Segurança
+
+Os controles de autenticação, 2FA, recuperação de senha, criptografia, LGPD e auditoria estão
+documentados em:
+
+- [`docs/SEGURANCA.md`](docs/SEGURANCA.md)
+- [`docs/LGPD.md`](docs/LGPD.md)
+- [`docs/TESTES.md`](docs/TESTES.md)
+- [`docs/ROTACAO_SEGREDOS.md`](docs/ROTACAO_SEGREDOS.md)
+- [`docs/RESUMO_CIENTIFICO.md`](docs/RESUMO_CIENTIFICO.md)
+
+> **Importante:** nenhuma credencial, keystore ou chave é versionada. Todas vêm de variáveis de
+> ambiente/cofre. Credenciais antigas presentes no histórico Git precisam ser rotacionadas no
+> provedor e o histórico precisa ser limpo, conforme `docs/ROTACAO_SEGREDOS.md`.
+
+## Configuração local
+
+Variáveis obrigatórias em produção (exemplo sem valores sensíveis):
+
+```text
+PORT=8443
+SERVER_SSL_ENABLED=true
+SERVER_SSL_KEY_STORE=/caminho/fora/do/repo/keystore.p12
+SERVER_SSL_KEY_STORE_PASSWORD=<secret>
+SPRING_DATASOURCE_URL=jdbc:postgresql://HOST:6543/postgres?sslmode=require
+SPRING_DATASOURCE_USERNAME=<user>
+SPRING_DATASOURCE_PASSWORD=<secret>
+SECURITY_ENCRYPTION_KEY_BASE64=<32 bytes>
+SECURITY_AUDIT_HMAC_KEY_BASE64=<32 bytes>
+SPRING_MAIL_HOST=<smtp>
+SPRING_MAIL_USERNAME=<user>
+SPRING_MAIL_PASSWORD=<secret>
+MAIL_FROM=<remetente>
+MAIL_RESET_BASE_URL=https://SEU-DOMINIO/reset-password
+SECURITY_ADMIN_EMAILS=<emails>
+```
+
+Para testes, não é necessário configurar nada: o Maven wrapper força o perfil `test` com H2 e
+chaves fictícias via `systemPropertyVariables`.
+
+## Comandos
+
+```powershell
+# Compilar e testar
+.\mvnw.cmd -B clean test
+
+# Empacotar sem testes
+.\mvnw.cmd -B package -DskipTests
+
+# Executar com perfil de DAST (H2, sem credenciais reais)
+$env:SPRING_PROFILES_ACTIVE = 'dast'
+.\mvnw.cmd -B spring-boot:run
+```
+
+Consulte [`docs/TESTES.md`](docs/TESTES.md) para os comandos de TruffleHog, Semgrep, Trivy, Bearer,
+ZAP e validação TLS.
 
 ## Status
 
-**Em desenvolvimento — MVP 1**
+**Em desenvolvimento — MVP 1 com endurecimento de segurança aplicado.**
 
 ## Autores
 
-**Davi Eliote de Carvalho**
-**Luiz Nabarretti**
-**Igor Hajime**
+Davi Eliote de Carvalho · Luiz Nabarretti · Igor Hajime
 
 Projeto acadêmico — Engenharia de Software.

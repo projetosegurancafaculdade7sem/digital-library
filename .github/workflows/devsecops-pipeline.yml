@@ -16,12 +16,36 @@ jobs:
         with:
           fetch-depth: 0 
       
-      - name: Varredura de Segredos 
+      - name: Varredura de Segredos
         uses: trufflesecurity/trufflehog@main
-        continue-on-error: true 
         with:
           path: ./
-          extra_args: --only-verified
+          base: ${{ github.event.before || github.event.pull_request.base.sha }}
+          head: ${{ github.sha }}
+          extra_args: --only-verified --results=verified,unknown --json
+
+      - name: Capturar evidências do TruffleHog
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p evidence
+          {
+            echo '# TruffleHog'
+            echo
+            echo '```text'
+            echo '$ trufflehog git file://. --since-commit '"${{ github.event.before || github.event.pull_request.base.sha }}" \
+              --branch HEAD --only-verified --results=verified,unknown --json'
+            echo '```'
+          } | tee evidence/trufflehog.txt
+          echo 'Consulte o log do job para os achados do TruffleHog.' | tee -a evidence/trufflehog.txt
+
+      - name: Enviar evidências do TruffleHog
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trufflehog-evidence
+          path: evidence/
+          if-no-files-found: warn
 
   sca-trivy:
     name: SCA Dependências (Trivy)
@@ -44,7 +68,6 @@ jobs:
       
       - name: Trivy Vulnerability Scanner
         uses: aquasecurity/trivy-action@master
-        continue-on-error: true 
         with:
           scan-type: 'fs'
           format: 'table'
@@ -53,6 +76,28 @@ jobs:
           severity: 'HIGH,CRITICAL' 
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Capturar evidências do Trivy
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p evidence
+          {
+            echo '# Trivy'
+            echo
+            echo '```text'
+            echo '$ trivy fs --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 .'
+            echo '```'
+          } | tee evidence/trivy.txt
+          echo 'Consulte o log do job para a tabela de vulnerabilidades.' | tee -a evidence/trivy.txt
+
+      - name: Enviar evidências do Trivy
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-evidence
+          path: evidence/
+          if-no-files-found: warn
 
   sast-semgrep:
     name: SAST Análise Estática (Semgrep)
@@ -63,9 +108,30 @@ jobs:
         
       - name: Rodar Semgrep CI
         uses: returntocorp/semgrep-action@v1
-        continue-on-error: true
         with:
           config: >-
             p/java
             p/spring-boot
             p/security-audit
+
+      - name: Capturar evidências do Semgrep
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p evidence
+          {
+            echo '# Semgrep'
+            echo
+            echo '```text'
+            echo '$ semgrep --config p/java --config p/spring-boot --config p/security-audit .'
+            echo '```'
+          } | tee evidence/semgrep.txt
+          echo 'Consulte o log do job para os achados do Semgrep.' | tee -a evidence/semgrep.txt
+
+      - name: Enviar evidências do Semgrep
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: semgrep-evidence
+          path: evidence/
+          if-no-files-found: warn

@@ -9,8 +9,15 @@ import lombok.NoArgsConstructor;
 import java.time.Instant;
 import java.util.UUID;
 
+/**
+ * Token de recuperação. O campo {@code tokenHash} contém HMAC-SHA256; o token em claro
+ * existe apenas no e-mail e na requisição que o consome (itens 2 e 3 do parecer).
+ */
 @Entity
-@Table(name = "tb_password_reset_tokens")
+@Table(name = "tb_password_reset_tokens", indexes = {
+        @Index(name = "idx_reset_token_hash", columnList = "token_hash"),
+        @Index(name = "idx_reset_token_user", columnList = "user_id")
+})
 @Data
 @Builder
 @NoArgsConstructor
@@ -21,8 +28,8 @@ public class PasswordResetToken {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
-    @Column(name = "token", nullable = false, unique = true)
-    private String token;
+    @Column(name = "token_hash", nullable = false, unique = true, length = 100)
+    private String tokenHash;
 
     @Column(name = "user_id", nullable = false)
     private UUID userId;
@@ -34,10 +41,16 @@ public class PasswordResetToken {
     @Column(name = "used", nullable = false)
     private boolean used = false;
 
-    @Column(name = "client_ip")
+    @Column(name = "used_at")
+    private Instant usedAt;
+
+    @Column(name = "revoked_at")
+    private Instant revokedAt;
+
+    @Column(name = "client_ip", length = 45)
     private String clientIp;
 
-    @Column(name = "user_agent")
+    @Column(name = "user_agent", length = 500)
     private String userAgent;
 
     @Builder.Default

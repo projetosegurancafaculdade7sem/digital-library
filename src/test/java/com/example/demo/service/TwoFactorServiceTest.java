@@ -6,6 +6,7 @@ import dev.samstevens.totp.code.HashingAlgorithm;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TwoFactorServiceTest {
@@ -27,5 +28,17 @@ class TwoFactorServiceTest {
         String code = new DefaultCodeGenerator(HashingAlgorithm.SHA1, 6).generate(secret, bucket);
 
         assertTrue(totp.verifyCode(decrypted, code));
+    }
+
+    @Test
+    void codigoForaDaJanelaDeTempoEInvalidado() throws Exception {
+        TwoFactorService totp = new TwoFactorService();
+        String secret = totp.generateSecret();
+        long currentBucket = Math.floorDiv(System.currentTimeMillis() / 1000, 30);
+        String expiredCode = new DefaultCodeGenerator(HashingAlgorithm.SHA1, 6)
+                .generate(secret, currentBucket - 10);
+
+        assertFalse(totp.verifyCode(secret, expiredCode));
+        assertFalse(totp.verifyCode(secret, "abc123"));
     }
 }

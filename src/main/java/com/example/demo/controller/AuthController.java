@@ -1,10 +1,9 @@
 package com.example.demo.controller;
 
 import com.example.demo.dto.request.RegisterRequest;
-import com.example.demo.model.PasswordResetToken;
 import com.example.demo.model.User;
-import com.example.demo.repository.PasswordResetTokenRepository;
 import com.example.demo.repository.UserRepository;
+import com.example.demo.security.PasswordPolicy;
 import com.example.demo.service.AuditService;
 import com.example.demo.service.AuthService;
 import com.example.demo.service.MailService;
@@ -21,7 +20,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 
 import java.time.Instant;
-import java.util.Optional;
+import java.util.List;
 
 @Controller
 public class AuthController {
@@ -31,26 +30,26 @@ public class AuthController {
     private final AuthService authService;
     private final TwoFactorService twoFactorService;
     private final PasswordResetService passwordResetService;
-    private final PasswordResetTokenRepository passwordResetTokenRepository;
     private final MailService mailService;
     private final AuditService auditService;
+    private final PasswordPolicy passwordPolicy;
 
     public AuthController(UserRepository userRepository,
                           UserService userService,
                           AuthService authService,
                           TwoFactorService twoFactorService,
                           PasswordResetService passwordResetService,
-                          PasswordResetTokenRepository passwordResetTokenRepository,
                           MailService mailService,
-                          AuditService auditService) {
+                          AuditService auditService,
+                          PasswordPolicy passwordPolicy) {
         this.userRepository = userRepository;
         this.userService = userService;
         this.authService = authService;
         this.twoFactorService = twoFactorService;
         this.passwordResetService = passwordResetService;
-        this.passwordResetTokenRepository = passwordResetTokenRepository;
         this.mailService = mailService;
         this.auditService = auditService;
+        this.passwordPolicy = passwordPolicy;
     }
 
     @GetMapping("/login")
@@ -79,8 +78,9 @@ public class AuthController {
             return "auth/register";
         }
 
-        if (password == null || password.length() < 8) {
-            model.addAttribute("error", "A senha deve conter no mínimo 8 caracteres.");
+        List<String> passwordErrors = passwordPolicy.violations(password);
+        if (!passwordErrors.isEmpty()) {
+            model.addAttribute("error", "Senha fraca: " + String.join(" ", passwordErrors));
             return "auth/register";
         }
 
@@ -147,22 +147,16 @@ public class AuthController {
             mailService.sendPasswordResetEmail(email, token);
         }
 
-        auditService.logEvent(null, "PASSWORD_RESET_REQUEST", clientIp, userAgent);
+        // Resposta identica para e-mail existente ou inexistente (anti-enumeração).
         return "redirect:/forgot-password?sent=true";
     }
 
     @GetMapping("/reset-password")
     public String resetPasswordPage(@RequestParam("token") String token, Model model) {
-        Optional<PasswordResetToken> tokenOpt = passwordResetTokenRepository.findByToken(token);
-        if (tokenOpt.isEmpty() || tokenOpt.get().isUsed() || tokenOpt.get().getExpiresAt().isBefore(Instant.now())) {
+        if (!passwordResetService.isTokenUsable(token)) {
             return "redirect:/login?error=token-invalido";
         }
-
-        User user = userRepository.findById(tokenOpt.get().getUserID())
-                .orElseThrow(() -> new IllegalArgumentException("Usuário não encontrado"));
-
         model.addAttribute("token", token);
-        model.addAttribute("email", user.getEmail());
         return "auth/reset-password";
     }
 
@@ -174,18 +168,17 @@ public class AuthController {
         String clientIp = request.getRemoteAddr();
         String userAgent = request.getHeader("User-Agent");
 
-        if (newPassword == null || newPassword.length() < 8) {
-            model.addAttribute("error", "A senha deve conter no mínimo 8 caracteres.");
+        List<String> passwordErrors = passwordPolicy.violations(newPassword);
+        if (!passwordErrors.isEmpty()) {
+            model.addAttribute("error", "Senha fraca: " + String.join(" ", passwordErrors));
             model.addAttribute("token", token);
             return "auth/reset-password";
         }
 
         try {
             passwordResetService.resetPassword(token, newPassword, clientIp, userAgent);
-            auditService.logEvent(null, "PASSWORD_RESET_SUCCESS", clientIp, userAgent);
             return "redirect:/login?resetSuccess=true";
         } catch (Exception e) {
-            auditService.logEvent(null, "PASSWORD_RESET_FAILURE", clientIp, userAgent);
             model.addAttribute("error", e.getMessage());
             model.addAttribute("token", token);
             return "auth/reset-password";

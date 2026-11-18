@@ -110,21 +110,6 @@ jobs:
     name: DAST (OWASP ZAP)
     runs-on: ubuntu-latest
 
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_USER: root
-          POSTGRES_PASSWORD: ***REMOVED***
-          POSTGRES_DB: demo
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U root -d demo"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
     steps:
       - name: Checkout do codigo
         uses: actions/checkout@v4
@@ -142,18 +127,14 @@ jobs:
       - name: Compilar a aplicacao
         run: mvn -B -ntp clean package -DskipTests
 
-      - name: Subir aplicacao em Background
+      # O perfil 'dast' usa H2 em memoria e chaves ficticias. Nao ha
+      # credenciais reais ou valores padrao inseguros no job.
+      - name: Subir aplicacao em Background com perfil DAST
         env:
-          SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/demo
-          SPRING_DATASOURCE_USERNAME: ***REMOVED***
-          SPRING_DATASOURCE_PASSWORD: ***REMOVED***
-          SPRING_MAIL_USERNAME: ***REMOVED***
-          SPRING_MAIL_PASSWORD: ***REMOVED***
-          SECURITY_ENCRYPTION_KEY_BASE64: ***REMOVED***
+          SPRING_PROFILES_ACTIVE: dast
         run: |
           java -jar target/*.jar \
             --server.port=8080 \
-            --server.ssl.enabled=false \
             > spring-boot.log 2>&1 &
 
       - name: Aguardar aplicacao ficar disponivel
@@ -177,6 +158,12 @@ jobs:
           cat spring-boot.log
           exit 1
 
+      - name: Registrar comandos reproduceis do DAST
+        shell: bash
+        run: |
+          mkdir -p evidence
+          bash scripts/capture-security-evidence.sh --section dast --url http://localhost:8080 | tee evidence/zap-baseline.txt
+
       - name: Criar regras do ZAP
         run: |
           printf '40012\tFAIL\t(Cross Site Scripting - Reflected)\n' > zap-rules.tsv
@@ -194,6 +181,14 @@ jobs:
           cmd_options: '-I'
           fail_action: true
           allow_issue_writing: false
+
+      - name: Enviar evidencias do DAST
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dast-evidence
+          path: evidence/
+          if-no-files-found: warn
 
       - name: Mostrar log da aplicacao em caso de falha
         if: failure()
