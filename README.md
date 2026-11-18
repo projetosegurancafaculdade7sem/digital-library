@@ -78,6 +78,22 @@ MAIL_RESET_BASE_URL=https://SEU-DOMINIO/reset-password
 SECURITY_ADMIN_EMAILS=<emails>
 ```
 
+### Deploy no Render
+
+O Render termina o TLS no proxy da plataforma. Portanto a aplicação deve rodar em HTTP interno
+(e confiar em `X-Forwarded-Proto`, já habilitado por `server.forward-headers-strategy=framework`):
+
+```text
+SERVER_SSL_ENABLED=false
+SECURITY_TLS_REQUIRE=false
+SECURITY_DATASOURCE_SSL_REQUIRED=true
+```
+
+Todas as demais variáveis da lista acima também são obrigatórias. O arquivo [`render.yaml`](render.yaml)
+já traz essa configuração: basta criar o serviço a partir do blueprint e preencher os segredos
+(`sync: false`) no painel. Se o deploy falhar, o `StartupSecurityValidator` agora lista **todas**
+as variáveis ausentes em uma única mensagem, antes de qualquer bean ser criado.
+
 Para testes, não é necessário configurar nada: o Maven wrapper força o perfil `test` com H2 e
 chaves fictícias via `systemPropertyVariables`.
 

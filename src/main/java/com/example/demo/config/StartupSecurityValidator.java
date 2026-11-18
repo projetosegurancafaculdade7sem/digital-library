@@ -2,120 +2,149 @@ package com.example.demo.config;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.ApplicationArguments;
-import org.springframework.boot.ApplicationRunner;
+import org.springframework.beans.factory.config.BeanFactoryPostProcessor;
+import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
+import org.springframework.context.EnvironmentAware;
 import org.springframework.context.annotation.Profile;
+import org.springframework.core.env.ConfigurableEnvironment;
+import org.springframework.core.env.Environment;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Component;
 
 import java.io.File;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.Locale;
+import java.util.Map;
 
 /**
- * Falha o boot de producao se TLS, chaves ou schema estiverem mal configurados
- * (itens 3 e 6 do parecer). Nao imprime nenhum valor sensivel.
+ * Valida a configuracao de seguranca ANTES da criacao de qualquer bean
+ * (itens 3 e 6 do parecer). Sendo um {@link BeanFactoryPostProcessor}, uma
+ * variavel ausente gera uma unica mensagem clara, em vez de uma
+ * PlaceholderResolutionException vinda da autoconfiguracao de mail.
+ * Nao imprime nenhum valor sensivel.
  */
 @Component
 @Profile("!test & !dast")
-public class StartupSecurityValidator implements ApplicationRunner {
+public class StartupSecurityValidator implements BeanFactoryPostProcessor, EnvironmentAware {
 
     private static final Logger log = LoggerFactory.getLogger(StartupSecurityValidator.class);
 
-    private final boolean tlsRequired;
-    private final boolean sslEnabled;
-    private final String keyStore;
-    private final String keyStorePassword;
-    private final String datasourceUrl;
-    private final boolean datasourceSslRequired;
-    private final String ddlAuto;
-    private final String encryptionKey;
-    private final String hmacKey;
-    private final String mailHost;
-    private final String mailUsername;
-    private final String mailPassword;
-    private final String resetBaseUrl;
+    private ConfigurableEnvironment environment;
 
-    public StartupSecurityValidator(
-            @Value("${security.tls.require:true}") boolean tlsRequired,
-            @Value("${server.ssl.enabled:true}") boolean sslEnabled,
-            @Value("${server.ssl.key-store:}") String keyStore,
-            @Value("${server.ssl.key-store-password:}") String keyStorePassword,
-            @Value("${spring.datasource.url:}") String datasourceUrl,
-            @Value("${security.datasource.ssl-required:true}") boolean datasourceSslRequired,
-            @Value("${spring.jpa.hibernate.ddl-auto:validate}") String ddlAuto,
-            @Value("${security.encryption.key-base64:}") String encryptionKey,
-            @Value("${security.audit.hmac-key-base64:}") String hmacKey,
-            @Value("${spring.mail.host:}") String mailHost,
-            @Value("${spring.mail.username:}") String mailUsername,
-            @Value("${spring.mail.password:}") String mailPassword,
-            @Value("${mail.reset.base-url:}") String resetBaseUrl) {
-        this.tlsRequired = tlsRequired;
-        this.sslEnabled = sslEnabled;
-        this.keyStore = keyStore;
-        this.keyStorePassword = keyStorePassword;
-        this.datasourceUrl = datasourceUrl;
-        this.datasourceSslRequired = datasourceSslRequired;
-        this.ddlAuto = ddlAuto;
-        this.encryptionKey = encryptionKey;
-        this.hmacKey = hmacKey;
-        this.mailHost = mailHost;
-        this.mailUsername = mailUsername;
-        this.mailPassword = mailPassword;
-        this.resetBaseUrl = resetBaseUrl;
+    @Override
+    public void setEnvironment(Environment environment) {
+        this.environment = (ConfigurableEnvironment) environment;
     }
 
     @Override
-    public void run(ApplicationArguments args) {
+    public void postProcessBeanFactory(ConfigurableListableBeanFactory beanFactory) {
+        Map<String, String> errors = new LinkedHashMap<>();
+
+        boolean tlsRequired = bool("security.tls.require", true);
+        boolean sslEnabled = bool("server.ssl.enabled", true);
+        boolean datasourceSslRequired = bool("security.datasource.ssl-required", true);
+        String ddlAuto = prop("spring.jpa.hibernate.ddl-auto", "validate");
+
         if (tlsRequired) {
-            require(sslEnabled, "TLS obrigatorio: defina SERVER_SSL_ENABLED=true");
-            requirePresent(keyStore, "SERVER_SSL_KEY_STORE");
-            requirePresent(keyStorePassword, "SERVER_SSL_KEY_STORE_PASSWORD");
-            require(!isWeakSecret(keyStorePassword), "Senha do keystore fraca/conhecida — rotacione o certificado");
-            require(keyStoreExists(), "Keystore TLS nao encontrado: " + keyStore);
-            require(resetBaseUrl.startsWith("https://"), "MAIL_RESET_BASE_URL deve usar HTTPS");
+            require(errors, "SERVER_SSL_ENABLED", sslEnabled,
+                    "TLS obrigatorio: defina SERVER_SSL_ENABLED=true");
+            String keyStore = prop("server.ssl.key-store");
+            String keyStorePassword = prop("server.ssl.key-store-password");
+            requirePresent(errors, "SERVER_SSL_KEY_STORE", keyStore);
+            requirePresent(errors, "SERVER_SSL_KEY_STORE_PASSWORD", keyStorePassword);
+            if (!keyStorePassword.isBlank() && isWeakSecret(keyStorePassword)) {
+                errors.put("SERVER_SSL_KEY_STORE_PASSWORD", "senha do keystore fraca/conhecida — rotacione");
+            }
+            if (!keyStore.isBlank() && !keyStoreExists(keyStore)) {
+                errors.put("SERVER_SSL_KEY_STORE", "keystore nao encontrado: " + keyStore);
+            }
         }
 
-        requirePresent(encryptionKey, "SECURITY_ENCRYPTION_KEY_BASE64");
-        requirePresent(hmacKey, "SECURITY_AUDIT_HMAC_KEY_BASE64");
-        byte[] aes = decode(encryptionKey, "SECURITY_ENCRYPTION_KEY_BASE64", 32);
-        byte[] hmac = decode(hmacKey, "SECURITY_AUDIT_HMAC_KEY_BASE64", 32);
-        require(!Arrays.equals(aes, hmac), "As chaves AES e HMAC de auditoria devem ser distintas");
+        // O link de reset deve ser HTTPS mesmo quando o TLS e terminado no proxy (Render).
+        String resetBaseUrl = prop("mail.reset.base-url");
+        require(errors, "MAIL_RESET_BASE_URL", resetBaseUrl.startsWith("https://"),
+                "deve usar HTTPS");
 
-        if (datasourceSslRequired) {
-            require(datasourceUrl.toLowerCase(Locale.ROOT).contains("sslmode=require"),
-                    "A URL do PostgreSQL deve exigir sslmode=require");
+        String encryptionKey = prop("security.encryption.key-base64");
+        String hmacKey = prop("security.audit.hmac-key-base64");
+        requirePresent(errors, "SECURITY_ENCRYPTION_KEY_BASE64", encryptionKey);
+        requirePresent(errors, "SECURITY_AUDIT_HMAC_KEY_BASE64", hmacKey);
+        byte[] aes = decode(errors, "SECURITY_ENCRYPTION_KEY_BASE64", encryptionKey, 32);
+        byte[] hmac = decode(errors, "SECURITY_AUDIT_HMAC_KEY_BASE64", hmacKey, 32);
+        if (aes != null && hmac != null && Arrays.equals(aes, hmac)) {
+            errors.put("SECURITY_AUDIT_HMAC_KEY_BASE64", "deve ser distinta da chave AES");
         }
 
-        require(Arrays.asList("validate", "none").contains(ddlAuto.toLowerCase(Locale.ROOT)),
-                "spring.jpa.hibernate.ddl-auto deve ser validate ou none em producao");
+        String datasourceUrl = prop("spring.datasource.url");
+        requirePresent(errors, "SPRING_DATASOURCE_URL", datasourceUrl);
+        if (datasourceSslRequired && !datasourceUrl.isBlank()
+                && !datasourceUrl.toLowerCase(Locale.ROOT).contains("sslmode=require")) {
+            errors.put("SPRING_DATASOURCE_URL", "deve exigir sslmode=require");
+        }
 
-        requirePresent(mailHost, "SPRING_MAIL_HOST");
-        requirePresent(mailUsername, "SPRING_MAIL_USERNAME");
-        requirePresent(mailPassword, "SPRING_MAIL_PASSWORD");
-        require(!isWeakSecret(mailPassword), "Credencial SMTP fraca/conhecida — rotacione no provedor");
+        require(errors, "SPRING_JPA_DDL_AUTO",
+                Arrays.asList("validate", "none").contains(ddlAuto.toLowerCase(Locale.ROOT)),
+                "ddl-auto deve ser validate ou none em producao");
 
-        log.info("[SECURITY-CHECK] TLS={}, DB_SSL={}, ddl-auto={}, chaves distintas e tamanhos validos",
+        String mailHost = prop("spring.mail.host");
+        String mailUsername = prop("spring.mail.username");
+        String mailPassword = prop("spring.mail.password");
+        String mailFrom = prop("mail.from");
+        requirePresent(errors, "SPRING_MAIL_HOST", mailHost);
+        requirePresent(errors, "SPRING_MAIL_USERNAME", mailUsername);
+        requirePresent(errors, "SPRING_MAIL_PASSWORD", mailPassword);
+        requirePresent(errors, "MAIL_FROM", mailFrom);
+        if (!mailPassword.isBlank() && isWeakSecret(mailPassword)) {
+            errors.put("SPRING_MAIL_PASSWORD", "credencial SMTP fraca/conhecida — rotacione no provedor");
+        }
+
+        if (!errors.isEmpty()) {
+            StringBuilder message = new StringBuilder("[SECURITY-CHECK] Configuracao de producao invalida:");
+            errors.forEach((key, value) -> message.append("\n  - ").append(key).append(": ").append(value));
+            throw new IllegalStateException(message.toString());
+        }
+
+        log.info("[SECURITY-CHECK] TLS local={}, DB_SSL={}, ddl-auto={}, chaves distintas e validas",
                 sslEnabled, datasourceSslRequired, ddlAuto);
     }
 
-    private boolean keyStoreExists() {
+    private String prop(String key) {
+        return prop(key, "");
+    }
+
+    private String prop(String key, String defaultValue) {
+        String value = environment.getProperty(key, defaultValue);
+        return value == null ? defaultValue : value.trim();
+    }
+
+    private boolean bool(String key, boolean defaultValue) {
+        String value = environment.getProperty(key);
+        return value == null || value.isBlank() ? defaultValue : Boolean.parseBoolean(value.trim());
+    }
+
+    private boolean keyStoreExists(String keyStore) {
         if (keyStore.startsWith("classpath:")) {
             return new ClassPathResource(keyStore.substring("classpath:".length())).exists();
         }
         return new File(keyStore).isFile();
     }
 
-    private byte[] decode(String value, String name, int expectedLength) {
+    private byte[] decode(Map<String, String> errors, String name, String value, int expectedLength) {
+        if (value.isBlank()) {
+            return null;
+        }
         try {
             byte[] decoded = Base64.getDecoder().decode(value);
-            require(decoded.length == expectedLength,
-                    name + " deve decodificar para " + expectedLength + " bytes");
+            if (decoded.length != expectedLength) {
+                errors.put(name, "deve decodificar para " + expectedLength + " bytes");
+                return null;
+            }
             return decoded;
         } catch (IllegalArgumentException e) {
-            throw new IllegalStateException(name + " nao e Base64 valido", e);
+            errors.put(name, "nao e Base64 valido");
+            return null;
         }
     }
 
@@ -126,13 +155,13 @@ public class StartupSecurityValidator implements ApplicationRunner {
                 || normalized.equals("password") || normalized.equals("123456");
     }
 
-    private void requirePresent(String value, String name) {
-        require(value != null && !value.isBlank(), "Variavel obrigatoria ausente: " + name);
+    private void requirePresent(Map<String, String> errors, String key, String value) {
+        require(errors, key, value != null && !value.isBlank(), "variavel obrigatoria ausente");
     }
 
-    private void require(boolean condition, String message) {
+    private void require(Map<String, String> errors, String key, boolean condition, String message) {
         if (!condition) {
-            throw new IllegalStateException("[SECURITY-CHECK] " + message);
+            errors.put(key, message);
         }
     }
 }

@@ -13,11 +13,8 @@ public class MailService {
     private final String resetBaseUrl;
 
     public MailService(JavaMailSender mailSender,
-                       @Value("${mail.from}") String fromAddress,
-                       @Value("${mail.reset.base-url}") String resetBaseUrl) {
-        if (!resetBaseUrl.startsWith("https://")) {
-            throw new IllegalStateException("mail.reset.base-url deve usar HTTPS.");
-        }
+                       @Value("${mail.from:}") String fromAddress,
+                       @Value("${mail.reset.base-url:}") String resetBaseUrl) {
         this.mailSender = mailSender;
         this.fromAddress = fromAddress;
         this.resetBaseUrl = resetBaseUrl;
