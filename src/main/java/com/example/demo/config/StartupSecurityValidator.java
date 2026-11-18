@@ -42,6 +42,11 @@ public class StartupSecurityValidator implements BeanFactoryPostProcessor, Envir
     public void postProcessBeanFactory(ConfigurableListableBeanFactory beanFactory) {
         Map<String, String> errors = new LinkedHashMap<>();
 
+        if (environment.getProperty("RENDER") != null) {
+            log.warn("[SECURITY-CHECK] Render detectado: o TLS e terminado no proxy. "
+                    + "Defina SERVER_SSL_ENABLED=false e SECURITY_TLS_REQUIRE=false.");
+        }
+
         boolean tlsRequired = bool("security.tls.require", true);
         boolean sslEnabled = bool("server.ssl.enabled", true);
         boolean datasourceSslRequired = bool("security.datasource.ssl-required", true);
@@ -52,7 +57,11 @@ public class StartupSecurityValidator implements BeanFactoryPostProcessor, Envir
                     "TLS obrigatorio: defina SERVER_SSL_ENABLED=true");
             String keyStore = prop("server.ssl.key-store");
             String keyStorePassword = prop("server.ssl.key-store-password");
-            requirePresent(errors, "SERVER_SSL_KEY_STORE", keyStore);
+            if (keyStore.isBlank()) {
+                errors.put("SERVER_SSL_KEY_STORE", "variavel obrigatoria ausente "
+                        + "(ou defina SERVER_SSL_ENABLED=false / SECURITY_TLS_REQUIRE=false "
+                        + "se o TLS e terminado no proxy)");
+            }
             requirePresent(errors, "SERVER_SSL_KEY_STORE_PASSWORD", keyStorePassword);
             if (!keyStorePassword.isBlank() && isWeakSecret(keyStorePassword)) {
                 errors.put("SERVER_SSL_KEY_STORE_PASSWORD", "senha do keystore fraca/conhecida — rotacione");
@@ -65,7 +74,7 @@ public class StartupSecurityValidator implements BeanFactoryPostProcessor, Envir
         // O link de reset deve ser HTTPS mesmo quando o TLS e terminado no proxy (Render).
         String resetBaseUrl = prop("mail.reset.base-url");
         require(errors, "MAIL_RESET_BASE_URL", resetBaseUrl.startsWith("https://"),
-                "deve usar HTTPS");
+                "deve usar HTTPS (ex.: https://seu-dominio.onrender.com/reset-password?token=)");
 
         String encryptionKey = prop("security.encryption.key-base64");
         String hmacKey = prop("security.audit.hmac-key-base64");
