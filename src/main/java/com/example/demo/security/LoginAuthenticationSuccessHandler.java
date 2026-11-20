@@ -47,11 +47,12 @@ public class LoginAuthenticationSuccessHandler implements AuthenticationSuccessH
         response.sendRedirect(request.getContextPath() + "/login-2fa");
     }
 
+    /**
+     * O IP real ja vem resolvido pelo RemoteIpValve do Tomcat
+     * (server.forward-headers-strategy=native), que so aceita X-Forwarded-For de proxies
+     * confiaveis. Ler o cabecalho diretamente permitiria forjar o IP.
+     */
     private String clientIp(HttpServletRequest request) {
-        String xf = request.getHeader("X-Forwarded-For");
-        if (xf == null || xf.isBlank()) {
-            return request.getRemoteAddr();
-        }
-        return xf.split(",")[0].trim();
+        return request.getRemoteAddr();
     }
 }

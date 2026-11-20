@@ -4,7 +4,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.crypto.argon2.Argon2PasswordEncoder;
+import org.springframework.security.core.session.SessionRegistry;
+import org.springframework.security.core.session.SessionRegistryImpl;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.session.HttpSessionEventPublisher;
 
 /**
  * Configuração do PasswordEncoder Argon2id (req. 1.1 / 1.2 / 1.12).
@@ -56,5 +59,17 @@ public class SecurityBeansConfig {
                 memory,
                 iterations
         );
+    }
+
+    /** Permite encerrar as sessões ativas de um usuário (ex.: após redefinir a senha). */
+    @Bean
+    public SessionRegistry sessionRegistry() {
+        return new SessionRegistryImpl();
+    }
+
+    /** Mantém o SessionRegistry consistente quando sessões expiram ou são invalidadas. */
+    @Bean
+    public HttpSessionEventPublisher httpSessionEventPublisher() {
+        return new HttpSessionEventPublisher();
     }
 }

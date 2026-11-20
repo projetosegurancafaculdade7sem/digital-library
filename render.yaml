@@ -1,6 +1,6 @@
 # Blueprint do Render. O TLS e terminado no proxy da plataforma, portanto a
 # aplicacao roda em HTTP interno e confia em X-Forwarded-Proto (já configurado
-# em application.properties via server.forward-headers-strategy=framework).
+# em application.properties via server.forward-headers-strategy=native).
 # Segredos ficam com sync: false e devem ser preenchidos no painel do Render.
 services:
   - type: web

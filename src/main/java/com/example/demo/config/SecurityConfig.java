@@ -2,6 +2,7 @@ package com.example.demo.config;
 
 import com.example.demo.model.User;
 import com.example.demo.repository.UserRepository;
+import com.example.demo.security.EmailNormalizer;
 import com.example.demo.security.LoginAuthenticationFailureHandler;
 import com.example.demo.security.LoginAuthenticationSuccessHandler;
 import com.example.demo.security.RateLimitingFilter;
@@ -13,6 +14,7 @@ import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.core.session.SessionRegistry;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.web.SecurityFilterChain;
@@ -20,7 +22,6 @@ import org.springframework.security.web.access.intercept.AuthorizationFilter;
 
 import java.time.Instant;
 import java.util.Arrays;
-import java.util.Locale;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -59,12 +60,11 @@ public class SecurityConfig {
     @Bean
     public UserDetailsService userDetailsService() {
         Set<String> admins = Arrays.stream(adminEmails.split(","))
-                .map(String::trim)
-                .map(email -> email.toLowerCase(Locale.ROOT))
+                .map(EmailNormalizer::normalize)
                 .filter(email -> !email.isEmpty())
                 .collect(Collectors.toSet());
 
-        return username -> userRepository.findByEmail(username)
+        return username -> userRepository.findByLoginEmail(username)
                 .map(user -> {
                     unlockIfExpired(user);
                     String role = normalizeRole(user, admins);
@@ -80,7 +80,8 @@ public class SecurityConfig {
     }
 
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain securityFilterChain(HttpSecurity http,
+                                                   SessionRegistry sessionRegistry) throws Exception {
         http
                 .addFilterBefore(rateLimitingFilter,
                         org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class)
@@ -113,13 +114,20 @@ public class SecurityConfig {
                         .sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED)
                         .sessionFixation().migrateSession()
                         .maximumSessions(1)
+                        .sessionRegistry(sessionRegistry)
                         .expiredUrl("/login?expired=true")
                 )
                 .headers(headers -> headers
                         .frameOptions(frame -> frame.deny())
                         .contentSecurityPolicy(csp -> csp.policyDirectives(
-                                "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-                                        + "img-src 'self' data:; object-src 'none'; frame-ancestors 'none'"))
+                                // O Bootstrap e os ícones são servidos pelo jsDelivr; sem essas origens
+                                // o navegador bloqueava CSS/JS/fontes e todas as telas ficavam sem estilo.
+                                "default-src 'self'; "
+                                        + "script-src 'self' https://cdn.jsdelivr.net; "
+                                        + "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+                                        + "font-src 'self' https://cdn.jsdelivr.net; "
+                                        + "img-src 'self' data:; object-src 'none'; base-uri 'self'; "
+                                        + "frame-ancestors 'none'"))
                         .httpStrictTransportSecurity(hsts -> hsts
                                 .includeSubDomains(true)
                                 .maxAgeInSeconds(31_536_000L))
@@ -144,7 +152,9 @@ public class SecurityConfig {
     }
 
     private String normalizeRole(User user, Set<String> admins) {
-        String email = user.getEmail() == null ? "" : user.getEmail().toLowerCase(Locale.ROOT);
+        // Comparação exata com o e-mail gravado: contas antigas com variação de maiúsculas
+        // (ex.: "Admin@...") não herdam o papel de administrador.
+        String email = user.getEmail() == null ? "" : user.getEmail();
         if (admins.contains(email)) {
             return "ADMIN";
         }

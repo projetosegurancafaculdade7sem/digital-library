@@ -1,12 +1,18 @@
 package com.example.demo.service;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.mail.MailException;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 @Service
 public class MailService {
+
+    private static final Logger log = LoggerFactory.getLogger(MailService.class);
 
     private final JavaMailSender mailSender;
     private final String fromAddress;
@@ -20,6 +26,11 @@ public class MailService {
         this.resetBaseUrl = resetBaseUrl;
     }
 
+    /**
+     * Envio assíncrono: a resposta de /forgot-password leva o mesmo tempo para e-mails
+     * existentes e inexistentes (anti-enumeração) e uma falha de SMTP não vira erro 500.
+     */
+    @Async
     public void sendPasswordResetEmail(String to, String token) {
         String resetLink = resetBaseUrl + token;
 
@@ -36,6 +47,11 @@ public class MailService {
                         "Equipe Digital Library"
         );
 
-        mailSender.send(message);
+        try {
+            mailSender.send(message);
+        } catch (MailException ex) {
+            // Sem o destinatário nem o token no log (dados pessoais / segredo).
+            log.error("Falha ao enviar e-mail de recuperação de senha: {}", ex.getClass().getSimpleName());
+        }
     }
 }

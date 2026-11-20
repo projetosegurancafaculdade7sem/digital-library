@@ -3,6 +3,7 @@ package com.example.demo.service;
 import com.example.demo.dto.request.RegisterRequest;
 import com.example.demo.model.User;
 import com.example.demo.repository.UserRepository;
+import com.example.demo.security.EmailNormalizer;
 import com.example.demo.security.PasswordHashingSupport;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
@@ -36,7 +37,12 @@ public class UserService {
 
     @Transactional
     public RegistrationResult registerUser(RegisterRequest request, String name, String ipAddress, String userAgent) {
-        if (userRepository.existsByEmail(request.getEmail())) {
+        String email = EmailNormalizer.normalize(request.getEmail());
+        if (email.isEmpty()) {
+            throw new IllegalArgumentException("Informe um e-mail válido.");
+        }
+        // IgnoreCase também bloqueia variações de contas antigas gravadas com maiúsculas.
+        if (userRepository.existsByEmailIgnoreCase(email)) {
             throw new IllegalArgumentException("E-mail not available.");
         }
         if (!request.isAcceptTerms()) {
@@ -50,8 +56,8 @@ public class UserService {
         String totpSecretPlaintext = twoFactorService.generateSecret();
 
         User user = new User();
-        user.setName(name != null && !name.isBlank() ? name : request.getEmail());
-        user.setEmail(request.getEmail());
+        user.setName(name != null && !name.isBlank() ? name.trim() : email);
+        user.setEmail(email);
         user.setPasswordHash(encoded.hash());
         user.setPasswordSalt(encoded.salt());
         user.setTotpSecret(totpSecretPlaintext);

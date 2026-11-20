@@ -29,7 +29,7 @@ public class AuthService {
 
     @Transactional
     public User authenticatePrimary(String email, String rawPassword) {
-        User user = userRepository.findByEmail(email)
+        User user = userRepository.findByLoginEmail(email)
                 .orElseThrow(() -> new IllegalArgumentException("Invalid credentials"));
 
         ensureNotLocked(user);
@@ -51,7 +51,7 @@ public class AuthService {
     @Transactional
     public User authenticate(String email, String rawPassword, String totpcode,
                              String ipAddress, String userAgent) {
-        User user = userRepository.findByEmail(email).orElseThrow(() -> {
+        User user = userRepository.findByLoginEmail(email).orElseThrow(() -> {
             auditService.logEvent(null, "LOGIN_FAILED_UNKNOWN_USER", ipAddress, userAgent);
             return new IllegalArgumentException("Invalid Credentials");
         });
@@ -89,7 +89,7 @@ public class AuthService {
             auditService.logEvent(null, "LOGIN_FAILED_UNKNOWN_USER", ipAddress, userAgent);
             return false;
         }
-        return userRepository.findByEmail(email)
+        return userRepository.findByLoginEmail(email)
                 .map(user -> {
                     handleFailedLogin(user, ipAddress, userAgent);
                     return !user.isAccountNonLocked();

@@ -15,11 +15,12 @@
         <a th:href="@{/privacy/export}" class="list-group-item list-group-item-action">Exportar meus dados (JSON)</a>
         <a th:href="@{/privacy/consents}" class="list-group-item list-group-item-action">Histórico e revogação de consentimento</a>
     </div>
-    <form th:action="@{/privacy/delete}" method="post" onsubmit="return confirm('Excluir/anonimizar seus dados?');">
+    <form th:action="@{/privacy/delete}" method="post" data-confirm="Excluir/anonimizar seus dados?">
         <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}" />
         <button type="submit" class="btn btn-outline-danger">Solicitar exclusão dos dados</button>
     </form>
     <a th:href="@{/dashboard}" class="btn btn-link mt-3">Voltar</a>
 </div>
+<script th:src="@{/js/confirm.js}"></script>
 </body>
 </html>

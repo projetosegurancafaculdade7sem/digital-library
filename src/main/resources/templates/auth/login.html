@@ -61,6 +61,27 @@
                     <div>Múltiplas tentativas incorretas. Conta bloqueada temporariamente.</div>
                 </div>
 
+                <!-- Alertas: recuperação de senha e direitos LGPD -->
+                <div th:if="${param.resetSuccess}" class="alert alert-success d-flex align-items-center small py-2" role="alert">
+                    <i class="bi bi-check-circle-fill me-2"></i>
+                    <div>Senha redefinida com sucesso. Faça login com a nova senha.</div>
+                </div>
+
+                <div th:if="${param.tokenInvalid}" class="alert alert-warning d-flex align-items-center small py-2" role="alert">
+                    <i class="bi bi-exclamation-triangle-fill me-2"></i>
+                    <div>Link de recuperação inválido ou expirado. Solicite um novo.</div>
+                </div>
+
+                <div th:if="${param.deleted}" class="alert alert-info d-flex align-items-center small py-2" role="alert">
+                    <i class="bi bi-info-circle-fill me-2"></i>
+                    <div>Seus dados foram excluídos/anonimizados e a sessão foi encerrada.</div>
+                </div>
+
+                <div th:if="${param['consent-revoked']}" class="alert alert-warning d-flex align-items-center small py-2" role="alert">
+                    <i class="bi bi-person-x-fill me-2"></i>
+                    <div>O consentimento da conta foi revogado. O acesso está bloqueado.</div>
+                </div>
+
                 <!-- ========================================================================= -->
                 <!-- FORMULÁRIO DE AUTENTICAÇÃO PRIMÁRIA -->
                 <!-- ========================================================================= -->

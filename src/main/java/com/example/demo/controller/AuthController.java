@@ -3,6 +3,7 @@ package com.example.demo.controller;
 import com.example.demo.dto.request.RegisterRequest;
 import com.example.demo.model.User;
 import com.example.demo.repository.UserRepository;
+import com.example.demo.security.EmailNormalizer;
 import com.example.demo.security.PasswordPolicy;
 import com.example.demo.service.AuditService;
 import com.example.demo.service.AuthService;
@@ -52,6 +53,13 @@ public class AuthController {
         this.passwordPolicy = passwordPolicy;
     }
 
+    @GetMapping("/")
+    public String home() {
+        // Sem esta rota a página inicial respondia 404. O filtro de 2FA e o Spring Security
+        // redirecionam para /login ou /login-2fa quando necessário.
+        return "redirect:/dashboard";
+    }
+
     @GetMapping("/login")
     public String loginPage() {
         return "auth/login";
@@ -84,17 +92,18 @@ public class AuthController {
             return "auth/register";
         }
 
-        if (userRepository.findByEmail(email).isPresent()) {
+        email = EmailNormalizer.normalize(email);
+        if (email.isEmpty()) {
+            model.addAttribute("error", "Informe um e-mail válido.");
+            return "auth/register";
+        }
+        if (userRepository.existsByEmailIgnoreCase(email)) {
             model.addAttribute("error", "Este e-mail já está cadastrado no sistema.");
             return "auth/register";
         }
 
-        String clientIp = request.getHeader("X-Forwarded-For");
-        if (clientIp == null || clientIp.isBlank() || "unknown".equalsIgnoreCase(clientIp)) {
-            clientIp = request.getRemoteAddr();
-        } else if (clientIp.contains(",")) {
-            clientIp = clientIp.split(",")[0].trim();
-        }
+        // IP ja resolvido pelo RemoteIpValve (server.forward-headers-strategy=native).
+        String clientIp = request.getRemoteAddr();
 
         try {
             RegisterRequest registerRequest = new RegisterRequest();
@@ -125,8 +134,12 @@ public class AuthController {
             model.addAttribute("totpSecret", totpPlain);
             model.addAttribute("email", result.user().getEmail());
             return "auth/setup-2fa";
-        } catch (Exception e) {
+        } catch (IllegalArgumentException | IllegalStateException e) {
             model.addAttribute("error", e.getMessage());
+            return "auth/register";
+        } catch (Exception e) {
+            // Não expõe detalhes internos (SQL, stack) na tela.
+            model.addAttribute("error", "Não foi possível concluir o cadastro. Tente novamente.");
             return "auth/register";
         }
     }
@@ -144,7 +157,8 @@ public class AuthController {
 
         String token = passwordResetService.createResetToken(email, clientIp, userAgent);
         if (token != null) {
-            mailService.sendPasswordResetEmail(email, token);
+            // Assíncrono: mesmo tempo de resposta para e-mail existente ou inexistente.
+            mailService.sendPasswordResetEmail(EmailNormalizer.normalize(email), token);
         }
 
         // Resposta identica para e-mail existente ou inexistente (anti-enumeração).
@@ -154,7 +168,7 @@ public class AuthController {
     @GetMapping("/reset-password")
     public String resetPasswordPage(@RequestParam("token") String token, Model model) {
         if (!passwordResetService.isTokenUsable(token)) {
-            return "redirect:/login?error=token-invalido";
+            return "redirect:/login?tokenInvalid=true";
         }
         model.addAttribute("token", token);
         return "auth/reset-password";
@@ -178,7 +192,7 @@ public class AuthController {
         try {
             passwordResetService.resetPassword(token, newPassword, clientIp, userAgent);
             return "redirect:/login?resetSuccess=true";
-        } catch (Exception e) {
+        } catch (IllegalArgumentException | IllegalStateException e) {
             model.addAttribute("error", e.getMessage());
             model.addAttribute("token", token);
             return "auth/reset-password";
@@ -229,6 +243,8 @@ public class AuthController {
         }
 
         authService.registerSuccessful2FA(email, ip, ua);
+        // Novo ID de sessão ao elevar o nível de autenticação (proteção contra session fixation).
+        request.changeSessionId();
         session.setAttribute("2FA_VERIFIED", true);
         return "redirect:/dashboard";
     }

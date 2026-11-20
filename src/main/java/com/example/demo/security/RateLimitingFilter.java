@@ -33,6 +33,8 @@ public class RateLimitingFilter extends OncePerRequestFilter {
             "/reset-password"
     );
 
+    private static final int MAX_TRACKED_CLIENTS = 100_000;
+
     private final Map<String, Bucket> buckets = new ConcurrentHashMap<>();
 
     private Bucket createNewBucket() {
@@ -51,6 +53,10 @@ public class RateLimitingFilter extends OncePerRequestFilter {
 
         if (isCriticalAuthPath(path)) {
             String clientIp = getClientIP(request);
+            if (buckets.size() > MAX_TRACKED_CLIENTS) {
+                // Limite de memoria: evita crescimento ilimitado do mapa.
+                buckets.clear();
+            }
             Bucket bucket = buckets.computeIfAbsent(clientIp, k -> createNewBucket());
 
             if (!bucket.tryConsume(1)) {
@@ -75,11 +81,12 @@ public class RateLimitingFilter extends OncePerRequestFilter {
         return false;
     }
 
+    /**
+     * IP resolvido pelo RemoteIpValve (server.forward-headers-strategy=native). Usar o
+     * primeiro valor de X-Forwarded-For permitia trocar de "IP" a cada requisicao e
+     * burlar o limite.
+     */
     private String getClientIP(HttpServletRequest request) {
-        String xfHeader = request.getHeader("X-Forwarded-For");
-        if (xfHeader == null || xfHeader.isEmpty()) {
-            return request.getRemoteAddr();
-        }
-        return xfHeader.split(",")[0].trim();
+        return request.getRemoteAddr();
     }
 }

@@ -61,7 +61,11 @@
                 </form>
 
                 <div class="text-center mt-4 border-top pt-3">
-                    <small class="text-muted">Deseja cancelar? <a th:href="@{/logout}" class="text-danger text-decoration-none fw-semibold">Sair</a></small>
+                    <form th:action="@{/logout}" method="post" class="m-0">
+                        <small class="text-muted">Deseja cancelar?
+                            <button type="submit" class="btn btn-link p-0 align-baseline text-danger text-decoration-none fw-semibold small">Sair</button>
+                        </small>
+                    </form>
                 </div>
 
             </div>

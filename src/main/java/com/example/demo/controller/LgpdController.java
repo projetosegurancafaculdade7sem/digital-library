@@ -5,10 +5,12 @@ import com.example.demo.model.UserConsent;
 import com.example.demo.service.LgpdService;
 import com.example.demo.service.UserService;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpSession;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -94,7 +96,14 @@ public class LgpdController {
                 request.getRemoteAddr(),
                 request.getHeader("User-Agent")
         );
-        return "redirect:/logout";
+        // Antes redirecionava para GET /logout, que nao existe (logout so aceita POST com CSRF):
+        // o titular continuava logado apos a exclusao. Encerramos a sessao aqui mesmo.
+        SecurityContextHolder.clearContext();
+        HttpSession session = request.getSession(false);
+        if (session != null) {
+            session.invalidate();
+        }
+        return "redirect:/login?deleted=true";
     }
 
     private User currentUser(Authentication authentication) {

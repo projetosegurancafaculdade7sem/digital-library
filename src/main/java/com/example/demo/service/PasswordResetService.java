@@ -37,6 +37,7 @@ public class PasswordResetService {
     private final PasswordPolicy passwordPolicy;
     private final TokenHasher tokenHasher;
     private final AuditService auditService;
+    private final SessionTerminationService sessionTerminationService;
 
     /**
      * @return token em claro apenas quando o e-mail existe; {@code null} caso contrário.
@@ -45,7 +46,7 @@ public class PasswordResetService {
     @Transactional
     public String createResetToken(String email, String clientIp, String userAgent) {
         Instant now = Instant.now();
-        Optional<User> maybeUser = userRepository.findByEmail(email == null ? "" : email.trim());
+        Optional<User> maybeUser = userRepository.findByLoginEmail(email);
 
         if (maybeUser.isEmpty()) {
             // Mesmo custo computacional para e-mail inexistente — sem vazamento por timing.
@@ -129,6 +130,8 @@ public class PasswordResetService {
         userRepository.save(user);
 
         tokenRepository.revokeAllActiveForUser(user.getId(), now);
+        // Invalida as sessões abertas com a senha anterior (prometido na documentação do item 2).
+        sessionTerminationService.expireAllSessions(user.getEmail());
         auditService.logEvent(null, "PASSWORD_RESET_SUCCESS", clientIp, userAgent);
     }
 
