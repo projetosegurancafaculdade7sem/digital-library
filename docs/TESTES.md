@@ -129,4 +129,5 @@ procedimento de âncora externa.
 
 ```bash
 psql "$SPRING_DATASOURCE_URL" -v ON_ERROR_STOP=1 -f docs/sql/audit-hardening.sql
+psql "$SPRING_DATASOURCE_URL" -v ON_ERROR_STOP=1 -f docs/sql/totp-replay.sql
 ```

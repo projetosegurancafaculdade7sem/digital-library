@@ -45,3 +45,9 @@ build/
 ### Evidencias locais (logs podem conter IPs) ###
 evidence/
 *.log
+
+### Bancos locais H2 (contem dados pessoais e hashes de senha) ###
+data/
+*.mv.db
+*.trace.db
+*.eml

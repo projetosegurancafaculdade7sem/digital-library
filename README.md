@@ -6,7 +6,7 @@ direitos autorais de terceiros.
 
 ## Stack
 
-- **Linguagem:** Java 21+
+- **Linguagem:** Java 17+ (compilado para 17; a imagem Docker usa Java 21)
 - **Framework:** Spring Boot (MVC + Thymeleaf)
 - **Banco de dados:** PostgreSQL gerenciado pelo Supabase (o Supabase é o provedor do serviço, não um motor diferente)
 - **Segurança:** Spring Security, Argon2id, TOTP, AES-256-GCM, HMAC-SHA256, TLS
@@ -34,7 +34,6 @@ src/main/java/com/example/demo/
 ├── config/         # SecurityConfig, StartupSecurityValidator, TLS
 ├── controller/     # autenticação, perfil, privacidade, administração
 ├── dto/            # objetos de transporte
-├── integration/    # clientes das APIs externas
 ├── model/          # entidades JPA
 ├── repository/     # interfaces Spring Data
 ├── security/       # filtros, TOTP, política de senha, HMAC

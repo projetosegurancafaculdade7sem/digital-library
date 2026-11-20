@@ -8,7 +8,7 @@ comandos reproduzíveis em [`TESTES.md`](TESTES.md).
 
 | Frente do parecer | Controle implementado | Evidência |
 |---|---|---|
-| Autenticação e 2FA | Segundo fator exigido por filtro central antes da autorização | `TwoFactorEnforcementFilter`, `AuthenticationEnforcementTest` |
+| Autenticação e 2FA | Segundo fator exigido por filtro central antes da autorização; código TOTP de uso único (anti-replay) | `TwoFactorEnforcementFilter`, `AuthenticationEnforcementTest`, `TotpReplayTest`, [`sql/totp-replay.sql`](sql/totp-replay.sql) |
 | Recuperação de senha | Token HMAC, 15 min, uso único atômico, política, anti-enumeração | `PasswordResetService`, `PasswordResetServiceTest` |
 | Criptografia/TLS | TLS obrigatório via ENV, AES-256-GCM e HMAC-SHA256 com chaves separadas | `StartupSecurityValidator`, `AttributeEncryptor`, `TokenHasher` |
 | LGPD | Inventário, consentimento, exportação, revogação e exclusão em cascata | `LgpdService`, `LgpdServiceTest`, [`LGPD.md`](LGPD.md) |

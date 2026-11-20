@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.OptionalLong;
 
 /**
  * Autenticação primária, 2FA TOTP e bloqueio por tentativas.
@@ -40,8 +41,19 @@ public class AuthService {
         return user;
     }
 
+    /**
+     * Valida o código TOTP e o consome: o mesmo código (ou um de janela anterior) não é
+     * aceito de novo, mesmo dentro dos ~60s de tolerância de relógio.
+     */
+    @Transactional
     public boolean verify2FACode(User user, String totpCode) {
-        return twoFactorService.verifyCode(user.getTotpSecret(), totpCode);
+        OptionalLong step = twoFactorService.matchingTimeStep(user.getTotpSecret(), totpCode);
+        if (step.isEmpty() || userRepository.markTotpStepUsed(user.getId(), step.getAsLong()) != 1) {
+            return false;
+        }
+        // Mantém o objeto em memória coerente: um save() posterior não pode desfazer o registro.
+        user.setTotpLastUsedStep(step.getAsLong());
+        return true;
     }
 
     /**
@@ -64,7 +76,7 @@ public class AuthService {
         }
 
         if (user.isTwoFactorEnabled()) {
-            if (!twoFactorService.verifyCode(user.getTotpSecret(), totpcode)) {
+            if (!verify2FACode(user, totpcode)) {
                 handleFailedLogin(user, ipAddress, userAgent);
                 auditService.logEvent(user.getId(), "LOGIN_FAILED_2FA", ipAddress, userAgent);
                 throw new IllegalArgumentException("2FA code invalid or expired!");

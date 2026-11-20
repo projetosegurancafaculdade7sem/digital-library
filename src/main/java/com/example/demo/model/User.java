@@ -43,6 +43,10 @@ public class User {
     @Column(name = "two_factor_secret")
     private String twoFactorSecret;
 
+    /** Última janela TOTP aceita: impede reutilizar o mesmo código (docs/sql/totp-replay.sql). */
+    @Column(name = "totp_last_used_step")
+    private Long totpLastUsedStep;
+
     @Builder.Default
     @Column(name = "two_factor_enabled", nullable = false)
     private boolean twoFactorEnabled = false;
@@ -155,6 +159,14 @@ public class User {
 
     public void setTotpSecret(String totpSecret) {
         this.twoFactorSecret = totpSecret;
+    }
+
+    public Long getTotpLastUsedStep() {
+        return totpLastUsedStep;
+    }
+
+    public void setTotpLastUsedStep(Long totpLastUsedStep) {
+        this.totpLastUsedStep = totpLastUsedStep;
     }
 
     public boolean isTwoFactorEnabled() {

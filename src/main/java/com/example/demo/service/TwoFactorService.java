@@ -18,6 +18,8 @@ import org.springframework.stereotype.Service;
 import java.io.ByteArrayOutputStream;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.OptionalLong;
 
 /**
  * TOTP (RFC 6238) compatível com Microsoft Authenticator / Google Authenticator.
@@ -31,6 +33,7 @@ public class TwoFactorService {
     private static final int PERIOD_SECONDS = 30;
     private static final int DIGITS = 6;
     private static final int QR_SIZE = 250;
+    private static final int ALLOWED_DISCREPANCY = 2;
 
     private final TimeProvider timeProvider = new SystemTimeProvider();
     private final CodeGenerator codeGenerator = new DefaultCodeGenerator(HashingAlgorithm.SHA1, DIGITS);
@@ -39,7 +42,7 @@ public class TwoFactorService {
     public TwoFactorService() {
         DefaultCodeVerifier verifier = new DefaultCodeVerifier(codeGenerator, timeProvider);
         verifier.setTimePeriod(PERIOD_SECONDS);
-        verifier.setAllowedTimePeriodDiscrepancy(2);
+        verifier.setAllowedTimePeriodDiscrepancy(ALLOWED_DISCREPANCY);
         this.codeVerifier = verifier;
     }
 
@@ -84,6 +87,36 @@ public class TwoFactorService {
         } catch (Exception ex) {
             return false;
         }
+    }
+
+    /**
+     * Igual a {@link #verifyCode}, mas devolve a janela de tempo (time step) do código aceito.
+     * Usado no login para impedir a reutilização do mesmo código (replay).
+     */
+    public OptionalLong matchingTimeStep(String secret, String code) {
+        if (secret == null || code == null) {
+            return OptionalLong.empty();
+        }
+        String normalizedCode = code.trim().replace(" ", "");
+        if (normalizedCode.length() != DIGITS || !normalizedCode.chars().allMatch(Character::isDigit)) {
+            return OptionalLong.empty();
+        }
+        String normalizedSecret = normalizeSecret(secret);
+        long current = Math.floorDiv(timeProvider.getTime(), PERIOD_SECONDS);
+        OptionalLong match = OptionalLong.empty();
+        // Percorre a janela inteira (sem parar no primeiro acerto) para manter tempo constante.
+        for (long step = current - ALLOWED_DISCREPANCY; step <= current + ALLOWED_DISCREPANCY; step++) {
+            try {
+                String expected = codeGenerator.generate(normalizedSecret, step);
+                if (MessageDigest.isEqual(expected.getBytes(StandardCharsets.US_ASCII),
+                        normalizedCode.getBytes(StandardCharsets.US_ASCII)) && match.isEmpty()) {
+                    match = OptionalLong.of(step);
+                }
+            } catch (Exception ex) {
+                return OptionalLong.empty();
+            }
+        }
+        return match;
     }
 
     private static String normalizeSecret(String secret) {
